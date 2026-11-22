@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      11.2
+// @version      11.3
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -13,7 +13,7 @@
 
     const STORAGE_KEY = 'tm-autochat-v10';
     const MAX_CHARS = 500;
-    const HOLD_SEND_MS = 1000; // Изменено на 1 секунду
+    const HOLD_SEND_MS = 1000;
 
     function loadData() {
         try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
@@ -37,6 +37,8 @@
     const DENSITY = 300;
     const MAX_PARTICLES = 2000;
     const spawners = new Set();
+    let refreshAutoChatVisibility = null;
+    let refreshChatListeners = null;
 
     function injectStyle() {
         if (document.getElementById(STYLE_ID)) return;
@@ -563,7 +565,6 @@
                 to { opacity: 1; transform: translateY(0); }
             }
 
-            /* MODALS */
             .tm-modal-overlay {
                 position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 999999;
                 display: flex; align-items: center; justify-content: center;
@@ -585,7 +586,6 @@
             .tm-modal-btn.confirm { background: #e91916; color: #fff; }
             .tm-modal-btn.confirm:hover { background: #ff4d4d; }
 
-            /* BIG EDIT MODAL */
             #tm-edit-modal {
                 position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000000;
                 display: flex; align-items: center; justify-content: center;
@@ -625,7 +625,6 @@
             #tm-edit-modal .tm-edit-btn.add { background: #2f2f35; color: #fff; }
             #tm-edit-modal .tm-edit-btn.cancel { background: #2f2f35; color: #adadb8; }
 
-            /* EMOTE PICKER MODAL */
             #tm-emote-picker-modal {
                 position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000001;
                 display: flex; align-items: center; justify-content: center;
@@ -884,13 +883,6 @@
     }
 
     collectEmotes();
-    setInterval(collectEmotes, 2500);
-    setTimeout(() => {
-        const chat = document.querySelector('.seventv-chat-list, [data-test-selector="chat-scrollable-area__message-container"]');
-        if (chat) {
-            try { new MutationObserver(collectEmotes).observe(chat, { childList: true, subtree: true }); } catch {}
-        }
-    }, 2000);
 
     (async () => {
         const parts = window.location.pathname.split('/').filter(Boolean);
@@ -1336,78 +1328,84 @@
             toggleSidebarBtn.innerHTML = '◀';
         }
 
-        let offlineHomeCachePath = '';
-        let offlineHomeCacheTime = 0;
-        let offlineHomeCacheValue = false;
+        function isElementVisible(element) {
+            if (!element || !element.isConnected) return false;
+            const style = window.getComputedStyle(element);
+            return style.display !== 'none' &&
+                style.visibility !== 'hidden' &&
+                style.visibility !== 'collapse' &&
+                style.opacity !== '0' &&
+                element.getClientRects().length > 0;
+        }
 
-        function isOfflineChannelHomePage() {
-            const path = window.location.pathname;
-            const now = Date.now();
+        function isChannelHomeNavigationVisible() {
+            const carousel = document.querySelector('[data-a-target="channel-home-carousel"]');
+            if (isElementVisible(carousel)) return true;
 
-            if (path === offlineHomeCachePath && now - offlineHomeCacheTime < 1000) return offlineHomeCacheValue;
+            const channelLabels = /^(главная|описание|клипы|видео|расписание|home|about|clips|videos|schedule)$/i;
+            const channelPaths = new Set(['about', 'clips', 'videos', 'schedule']);
 
-            offlineHomeCachePath = path;
-            offlineHomeCacheTime = now;
-            offlineHomeCacheValue = false;
+            for (const tablist of document.querySelectorAll('[role="tablist"]')) {
+                if (!isElementVisible(tablist)) continue;
+                const tabs = tablist.querySelectorAll('[role="tab"], a[href]');
+                for (const tab of tabs) {
+                    const label = (tab.innerText || tab.textContent || tab.getAttribute('aria-label') || '').trim();
+                    if (channelLabels.test(label)) return true;
+                }
+            }
 
-            const parts = path.split('/').filter(Boolean);
-            if (parts.length !== 1) return false;
-
-            const login = parts[0].toLowerCase();
-            const reserved = ['directory', 'downloads', 'inventory', 'settings', 'search', 'turbo', 'subscriptions', 'following', 'drops', 'jobs', 'wallet'];
-            if (reserved.includes(login)) return false;
-
-            const channelTabs = ['about', 'clips', 'videos', 'schedule', 'chat'];
-            const hasChannelTabs = Array.from(document.querySelectorAll('a[href]')).some(link => {
+            const channelLinks = Array.from(document.querySelectorAll('a[href]')).filter(link => {
+                if (!isElementVisible(link)) return false;
+                let target;
                 try {
-                    const linkPath = new URL(link.href, window.location.origin).pathname.toLowerCase();
-                    const linkParts = linkPath.split('/').filter(Boolean);
-                    return linkParts.length === 2 && linkParts[0] === login && channelTabs.includes(linkParts[1]);
+                    target = new URL(link.href, window.location.origin);
                 } catch {
                     return false;
                 }
+                const parts = target.pathname.split('/').filter(Boolean);
+                if (parts.length !== 2 || !channelPaths.has(parts[1].toLowerCase())) return false;
+                const label = (link.innerText || link.textContent || link.getAttribute('aria-label') || '').trim();
+                return channelLabels.test(label) || !!link.closest('nav, [role="tablist"], header, [data-a-target*="channel-header"]');
             });
 
-            if (!hasChannelTabs) return false;
+            if (channelLinks.length >= 2) return true;
+            if (channelLinks.some(link => link.closest('nav, [role="tablist"], header, [data-a-target*="channel-header"]'))) return true;
 
-            const liveIndicators = document.querySelectorAll('[data-a-target="live-badge"], [data-a-target="channel-header-live-indicator"], [data-test-selector="live-indicator"], .channel-status-info__live');
-            const hasLiveIndicator = Array.from(liveIndicators).some(el => {
-                const style = window.getComputedStyle(el);
-                return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && el.getClientRects().length > 0;
-            });
-
-            if (hasLiveIndicator) return false;
-
-            const player = document.querySelector('.video-player video, [data-a-target="video-player"] video, [data-a-target="player"] video, video[data-a-target="video-ref"]');
-            if (player) return false;
-
-            offlineHomeCacheValue = true;
-            return true;
+            return false;
         }
 
-        let chatVisibleTimer = null;
         let isChatCurrentlyVisible = false;
-        let isChatWaiting = false;
+        let observedChatRoom = null;
+        const chatRoomResizeObserver = new ResizeObserver(() => {
+            if (refreshAutoChatVisibility) refreshAutoChatVisibility();
+        });
 
-        function animateLoop() {
+        function updateChatVisibility() {
             const chatInput = document.querySelector('div[data-a-target="chat-input"]');
             const chatRoom = document.querySelector('section[data-test-selector="chat-room-component-layout"]') || document.querySelector('.chat-room');
 
+            if (chatRoom !== observedChatRoom) {
+                if (observedChatRoom) chatRoomResizeObserver.unobserve(observedChatRoom);
+                observedChatRoom = chatRoom;
+                if (observedChatRoom) chatRoomResizeObserver.observe(observedChatRoom);
+            }
+
             let isChatValid = false;
-            if (!isOfflineChannelHomePage() && chatRoom && chatInput) {
+
+            if (!isChannelHomeNavigationVisible() && chatRoom && chatInput) {
                 const roomRect = chatRoom.getBoundingClientRect();
                 const inputRect = chatInput.getBoundingClientRect();
                 const roomStyle = window.getComputedStyle(chatRoom);
+                const chatText = (chatRoom.innerText || '').toLowerCase();
 
-                // Улучшенная проверка на офлайн
                 const isOffline =
                     !!document.querySelector('[data-a-target="player-overlay-content-gate"]') ||
                     !!document.querySelector('.offline-indicator') ||
                     !!document.querySelector('[data-a-target="channel-header-offline-indicator"]') ||
-                    document.title.toLowerCase().includes('offline') ||
-                    (chatRoom.innerText || '').toLowerCase().includes('чат недоступен') ||
-                    (chatRoom.innerText || '').toLowerCase().includes('chat is disabled') ||
-                    inputRect.width === 0 || inputRect.height === 0;
+                    chatText.includes('чат недоступен') ||
+                    chatText.includes('chat is disabled') ||
+                    inputRect.width === 0 ||
+                    inputRect.height === 0;
 
                 if (roomRect.width > 100 && roomRect.height > 100 && roomRect.left < window.innerWidth &&
                     roomStyle.display !== 'none' && roomStyle.visibility !== 'hidden' && roomStyle.opacity !== '0' &&
@@ -1420,35 +1418,18 @@
                 const rightOffset = window.innerWidth - chatRoom.getBoundingClientRect().left;
                 toggleSidebarBtn.style.right = rightOffset + 'px';
                 panel.style.right = rightOffset + 'px';
-
-                if (!isChatCurrentlyVisible && !isChatWaiting) {
-                    isChatWaiting = true;
-                    chatVisibleTimer = setTimeout(() => {
-                        isChatCurrentlyVisible = true;
-                        isChatWaiting = false;
-                        const checkInput = document.querySelector('div[data-a-target="chat-input"]');
-                        const checkRoom = document.querySelector('section[data-test-selector="chat-room-component-layout"]') || document.querySelector('.chat-room');
-                        const checkOffline = !!document.querySelector('[data-a-target="player-overlay-content-gate"]') || !!document.querySelector('.offline-indicator');
-                        if (checkInput && checkRoom && checkInput.getBoundingClientRect().width > 0 && !checkOffline && !isOfflineChannelHomePage()) {
-                            toggleSidebarBtn.classList.add('visible');
-                        } else {
-                            isChatCurrentlyVisible = false;
-                        }
-                    }, 4000);
-                }
+                toggleSidebarBtn.classList.add('visible');
+                isChatCurrentlyVisible = true;
             } else {
-                if (isChatWaiting) { clearTimeout(chatVisibleTimer); chatVisibleTimer = null; isChatWaiting = false; }
-                if (isChatCurrentlyVisible) {
-                    isChatCurrentlyVisible = false;
-                    toggleSidebarBtn.classList.remove('visible');
-                    if (panel.classList.contains('open')) closePanel();
-                }
+                isChatCurrentlyVisible = false;
                 toggleSidebarBtn.classList.remove('visible');
                 if (panel.classList.contains('open')) closePanel();
             }
-            requestAnimationFrame(animateLoop);
         }
-        requestAnimationFrame(animateLoop);
+
+        refreshAutoChatVisibility = updateChatVisibility;
+        window.addEventListener('resize', updateChatVisibility);
+        updateChatVisibility();
 
         toggleSidebarBtn.addEventListener('click', (e) => {
             if (!e.isTrusted) return;
@@ -1511,7 +1492,6 @@
         const filterText = panel.querySelector('#tm-ac-history-filter-text');
         const filterList = panel.querySelector('#tm-ac-history-filter-list');
 
-        // --- EMOTE PICKER LOGIC ---
         const emoteSearch = emoteModal.querySelector('#tm-ep-search');
         const emoteList = emoteModal.querySelector('#tm-ep-list');
 
@@ -1559,7 +1539,6 @@
             e.stopPropagation();
             openEmotePicker(msgEl);
         });
-        // --------------------------
 
         if (data.msg) msgEl.value = data.msg.slice(0, MAX_CHARS);
         if (data.interval) intervalEl.value = data.interval;
@@ -1872,7 +1851,6 @@
                 `;
             }).join('');
 
-            // Drag & Drop logic
             let draggedItem = null;
             let draggedIdx = -1;
 
@@ -2279,7 +2257,6 @@
 
             removeLivePreview();
 
-            // Если выбрана паста из истории - не перезаписываем её!
             if (activeHistoryIdx === -1) {
                 addToHistory([text]);
             }
@@ -2346,13 +2323,14 @@
             }
         }
 
-        setInterval(attachChatListeners, 1000);
+        refreshChatListeners = attachChatListeners;
         attachChatListeners();
     }
 
     let initStarted = false;
+
     function initScript() {
-        if (initStarted) return;
+        if (initStarted || !document.body) return;
         initStarted = true;
         injectStyle();
         applySpoilerSettings();
@@ -2360,57 +2338,65 @@
         createAutoChatUI();
         requestAnimationFrame(tick);
 
-        let isUpdating = false;
-        new MutationObserver(() => {
-            if (isUpdating) return;
-            isUpdating = true;
+        let updateScheduled = false;
+
+        const isInternalNode = node => {
+            if (!node || node.nodeType !== 1) return false;
+            return node.matches('#tm-autochat-toggle-btn, #tm-autochat-panel, #tm-edit-modal, #tm-emote-picker-modal, #tm-modal-overlay, #tm-preview-container') ||
+                !!node.closest('#tm-autochat-toggle-btn, #tm-autochat-panel, #tm-edit-modal, #tm-emote-picker-modal, #tm-modal-overlay, #tm-preview-container');
+        };
+
+        const pageObserver = new MutationObserver(records => {
+            const hasPageMutation = records.some(record => {
+                const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+
+                if (target && isInternalNode(target)) return false;
+                if (record.type === 'attributes' && target === document.body) return false;
+
+                if (record.type === 'childList') {
+                    const changedNodes = [...record.addedNodes, ...record.removedNodes];
+                    if (changedNodes.length && changedNodes.every(isInternalNode)) return false;
+                }
+
+                return true;
+            });
+
+            if (!hasPageMutation || updateScheduled) return;
+
+            updateScheduled = true;
             requestAnimationFrame(() => {
                 injectStyle();
                 applySpoilerSettings();
                 setupSpoilers();
-                isUpdating = false;
+                collectEmotes();
+                if (refreshAutoChatVisibility) refreshAutoChatVisibility();
+                if (refreshChatListeners) refreshChatListeners();
+                updateScheduled = false;
             });
-        }).observe(document.body, { childList: true, subtree: true });
-    }
+        });
 
-    function waitForStablePage() {
-        return new Promise((resolve) => {
-            let idleTimeout = null;
-            let lastMutation = Date.now();
-            const observer = new MutationObserver(() => { lastMutation = Date.now(); });
-            observer.observe(document.body, { childList: true, subtree: true });
-
-            const checkStable = () => {
-                const silentTime = Date.now() - lastMutation;
-                const chatReady = !!document.querySelector('div[data-a-target="chat-input"]') || !!document.querySelector('section[data-test-selector="chat-room-component-layout"]');
-
-                if (silentTime > 1500 && chatReady) {
-                    observer.disconnect();
-                    if (idleTimeout) clearTimeout(idleTimeout);
-                    resolve();
-                    return;
-                }
-                if (silentTime > 8000) {
-                    observer.disconnect();
-                    if (idleTimeout) clearTimeout(idleTimeout);
-                    resolve();
-                    return;
-                }
-                setTimeout(checkStable, 300);
-            };
-
-            idleTimeout = setTimeout(() => { observer.disconnect(); resolve(); }, 15000);
-            setTimeout(checkStable, 500);
+        pageObserver.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'aria-expanded', 'aria-selected', 'role', 'href', 'data-a-target', 'data-test-selector', 'aria-label', 'alt', 'src', 'srcset', 'data-emote-name']
         });
     }
 
     function boot() {
-        waitForStablePage().then(() => {
-            if ('requestIdleCallback' in window) requestIdleCallback(() => initScript(), { timeout: 3000 });
-            else setTimeout(initScript, 500);
+        if (document.body) {
+            initScript();
+            return;
+        }
+
+        const startupObserver = new MutationObserver(() => {
+            if (!document.body) return;
+            startupObserver.disconnect();
+            initScript();
         });
+
+        startupObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
 
-    if (document.readyState === 'complete') boot();
-    else window.addEventListener('load', boot, { once: true });
+    boot();
 })();
