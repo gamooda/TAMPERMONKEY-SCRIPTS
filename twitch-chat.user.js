@@ -1341,16 +1341,16 @@
 
         function isChannelHomeNavigationVisible() {
             const carousel = document.querySelector('[data-a-target="channel-home-carousel"]');
-            if (isElementVisible(carousel)) return true;
+            if (carousel && carousel.isConnected) return true;
 
-            const channelLabels = /^(главная|описание|клипы|видео|расписание|home|about|clips|videos|schedule)$/i;
+            const channelLabels = /^(главная|описание|клипы|видео|расписание|home|about|clips|videos|schedule)(?:\s|$)/i;
             const channelPaths = new Set(['about', 'clips', 'videos', 'schedule']);
 
             for (const tablist of document.querySelectorAll('[role="tablist"]')) {
                 if (!isElementVisible(tablist)) continue;
                 const tabs = tablist.querySelectorAll('[role="tab"], a[href]');
                 for (const tab of tabs) {
-                    const label = (tab.innerText || tab.textContent || tab.getAttribute('aria-label') || '').trim();
+                    const label = (tab.innerText || tab.textContent || tab.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
                     if (channelLabels.test(label)) return true;
                 }
             }
@@ -1365,14 +1365,19 @@
                 }
                 const parts = target.pathname.split('/').filter(Boolean);
                 if (parts.length !== 2 || !channelPaths.has(parts[1].toLowerCase())) return false;
-                const label = (link.innerText || link.textContent || link.getAttribute('aria-label') || '').trim();
-                return channelLabels.test(label) || !!link.closest('nav, [role="tablist"], header, [data-a-target*="channel-header"]');
+                const label = (link.innerText || link.textContent || link.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+                return channelLabels.test(label);
             });
 
-            if (channelLinks.length >= 2) return true;
-            if (channelLinks.some(link => link.closest('nav, [role="tablist"], header, [data-a-target*="channel-header"]'))) return true;
+            if (channelLinks.some(link => link.closest('[data-a-target*="channel-header"]'))) return true;
 
-            return false;
+            const groups = new Map();
+            for (const link of channelLinks) {
+                const container = link.closest('nav, [role="tablist"], header, [data-a-target*="channel-header"]') || link.parentElement;
+                if (container) groups.set(container, (groups.get(container) || 0) + 1);
+            }
+
+            return Array.from(groups.values()).some(count => count >= 2);
         }
 
         let isChatCurrentlyVisible = false;
@@ -2345,6 +2350,7 @@
         requestAnimationFrame(tick);
 
         let updateScheduled = false;
+        let pendingPageRecords = [];
 
         const isInternalNode = node => {
             if (!node || node.nodeType !== 1) return false;
@@ -2367,16 +2373,28 @@
                 return true;
             });
 
-            if (!pageRecords.length || updateScheduled) return;
+            if (!pageRecords.length) return;
+
+            pendingPageRecords.push(...pageRecords);
+            if (updateScheduled) return;
 
             updateScheduled = true;
             requestAnimationFrame(() => {
-                const hasStructureChange = pageRecords.some(record => record.type === 'childList');
-                const hasEmoteChange = pageRecords.some(record => {
-                    if (record.type === 'childList') return true;
+                const currentRecords = pendingPageRecords;
+                pendingPageRecords = [];
+
+                const hasStructureChange = currentRecords.some(record => record.type === 'childList');
+                const hasEmoteChange = currentRecords.some(record => {
                     const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
-                    return !!target?.closest('.seventv-chat-list, [data-test-selector="chat-scrollable-area__message-container"]') ||
-                        ['alt', 'src', 'srcset', 'data-emote-name'].includes(record.attributeName);
+                    if (target?.closest('.seventv-chat-list, [data-test-selector="chat-scrollable-area__message-container"]')) return true;
+                    if (record.type === 'attributes') {
+                        return ['alt', 'src', 'srcset', 'data-emote-name'].includes(record.attributeName) && target?.matches('img');
+                    }
+                    return [...record.addedNodes].some(node => {
+                        if (node.nodeType !== 1) return false;
+                        return node.matches('img.seventv-chat-emote, img[class*="seventv"][alt], img[data-emote-name], img.chat-image[alt], img.chat-line__message--emote') ||
+                            !!node.querySelector('img.seventv-chat-emote, img[class*="seventv"][alt], img[data-emote-name], img.chat-image[alt], img.chat-line__message--emote');
+                    });
                 });
 
                 if (hasStructureChange) setupSpoilers();
