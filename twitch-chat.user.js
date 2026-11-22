@@ -1336,6 +1336,55 @@
             toggleSidebarBtn.innerHTML = '◀';
         }
 
+        let offlineHomeCachePath = '';
+        let offlineHomeCacheTime = 0;
+        let offlineHomeCacheValue = false;
+
+        function isOfflineChannelHomePage() {
+            const path = window.location.pathname;
+            const now = Date.now();
+
+            if (path === offlineHomeCachePath && now - offlineHomeCacheTime < 1000) return offlineHomeCacheValue;
+
+            offlineHomeCachePath = path;
+            offlineHomeCacheTime = now;
+            offlineHomeCacheValue = false;
+
+            const parts = path.split('/').filter(Boolean);
+            if (parts.length !== 1) return false;
+
+            const login = parts[0].toLowerCase();
+            const reserved = ['directory', 'downloads', 'inventory', 'settings', 'search', 'turbo', 'subscriptions', 'following', 'drops', 'jobs', 'wallet'];
+            if (reserved.includes(login)) return false;
+
+            const channelTabs = ['about', 'clips', 'videos', 'schedule', 'chat'];
+            const hasChannelTabs = Array.from(document.querySelectorAll('a[href]')).some(link => {
+                try {
+                    const linkPath = new URL(link.href, window.location.origin).pathname.toLowerCase();
+                    const linkParts = linkPath.split('/').filter(Boolean);
+                    return linkParts.length === 2 && linkParts[0] === login && channelTabs.includes(linkParts[1]);
+                } catch {
+                    return false;
+                }
+            });
+
+            if (!hasChannelTabs) return false;
+
+            const liveIndicators = document.querySelectorAll('[data-a-target="live-badge"], [data-a-target="channel-header-live-indicator"], [data-test-selector="live-indicator"], .channel-status-info__live');
+            const hasLiveIndicator = Array.from(liveIndicators).some(el => {
+                const style = window.getComputedStyle(el);
+                return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && el.getClientRects().length > 0;
+            });
+
+            if (hasLiveIndicator) return false;
+
+            const player = document.querySelector('.video-player video, [data-a-target="video-player"] video, [data-a-target="player"] video, video[data-a-target="video-ref"]');
+            if (player) return false;
+
+            offlineHomeCacheValue = true;
+            return true;
+        }
+
         let chatVisibleTimer = null;
         let isChatCurrentlyVisible = false;
         let isChatWaiting = false;
@@ -1345,7 +1394,7 @@
             const chatRoom = document.querySelector('section[data-test-selector="chat-room-component-layout"]') || document.querySelector('.chat-room');
 
             let isChatValid = false;
-            if (chatRoom && chatInput) {
+            if (!isOfflineChannelHomePage() && chatRoom && chatInput) {
                 const roomRect = chatRoom.getBoundingClientRect();
                 const inputRect = chatInput.getBoundingClientRect();
                 const roomStyle = window.getComputedStyle(chatRoom);
@@ -1380,7 +1429,7 @@
                         const checkInput = document.querySelector('div[data-a-target="chat-input"]');
                         const checkRoom = document.querySelector('section[data-test-selector="chat-room-component-layout"]') || document.querySelector('.chat-room');
                         const checkOffline = !!document.querySelector('[data-a-target="player-overlay-content-gate"]') || !!document.querySelector('.offline-indicator');
-                        if (checkInput && checkRoom && checkInput.getBoundingClientRect().width > 0 && !checkOffline) {
+                        if (checkInput && checkRoom && checkInput.getBoundingClientRect().width > 0 && !checkOffline && !isOfflineChannelHomePage()) {
                             toggleSidebarBtn.classList.add('visible');
                         } else {
                             isChatCurrentlyVisible = false;
