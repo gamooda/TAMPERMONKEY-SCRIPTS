@@ -39,6 +39,7 @@
     const spawners = new Set();
     let refreshAutoChatVisibility = null;
     let refreshChatListeners = null;
+    let refreshChannelState = null;
 
     function injectStyle() {
         if (document.getElementById(STYLE_ID)) return;
@@ -2109,21 +2110,26 @@
             if (currentTab === 'history') renderHistory();
         });
 
-        setInterval(() => {
+        function updateChannelState() {
             const currentCh = getChannelInfo().name;
-            if (currentCh !== lastKnownChannel) {
-                lastKnownChannel = currentCh;
-                channelEmoteNames.forEach(name => emoteMap.delete(name));
-                channelEmoteNames.clear();
-                if (currentCh) fetchSevenTVEmotes(currentCh);
+            if (currentCh === lastKnownChannel) return;
 
-                const hist = getHistory();
-                if (currentCh && hist.some(h => h.channel && h.channel.name === currentCh)) currentFilter = currentCh;
-                else currentFilter = 'all';
-                if (currentTab === 'history') renderHistory();
-                if (currentTab === 'send') updateLivePreview(msgEl.value, username);
-            }
-        }, 1500);
+            lastKnownChannel = currentCh;
+            channelEmoteNames.forEach(name => emoteMap.delete(name));
+            channelEmoteNames.clear();
+
+            if (currentCh) fetchSevenTVEmotes(currentCh);
+
+            const hist = getHistory();
+            if (currentCh && hist.some(h => h.channel && h.channel.name === currentCh)) currentFilter = currentCh;
+            else currentFilter = 'all';
+
+            if (currentTab === 'history') renderHistory();
+            if (currentTab === 'send') updateLivePreview(msgEl.value, username);
+        }
+
+        refreshChannelState = updateChannelState;
+        updateChannelState();
 
         let timeoutId = null;
         let countdownInterval = null;
@@ -2347,7 +2353,7 @@
         };
 
         const pageObserver = new MutationObserver(records => {
-            const hasPageMutation = records.some(record => {
+            const pageRecords = records.filter(record => {
                 const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
 
                 if (target && isInternalNode(target)) return false;
@@ -2361,16 +2367,23 @@
                 return true;
             });
 
-            if (!hasPageMutation || updateScheduled) return;
+            if (!pageRecords.length || updateScheduled) return;
 
             updateScheduled = true;
             requestAnimationFrame(() => {
-                injectStyle();
-                applySpoilerSettings();
-                setupSpoilers();
-                collectEmotes();
+                const hasStructureChange = pageRecords.some(record => record.type === 'childList');
+                const hasEmoteChange = pageRecords.some(record => {
+                    if (record.type === 'childList') return true;
+                    const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+                    return !!target?.closest('.seventv-chat-list, [data-test-selector="chat-scrollable-area__message-container"]') ||
+                        ['alt', 'src', 'srcset', 'data-emote-name'].includes(record.attributeName);
+                });
+
+                if (hasStructureChange) setupSpoilers();
+                if (hasEmoteChange) collectEmotes();
                 if (refreshAutoChatVisibility) refreshAutoChatVisibility();
                 if (refreshChatListeners) refreshChatListeners();
+                if (refreshChannelState) refreshChannelState();
                 updateScheduled = false;
             });
         });
