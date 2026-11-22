@@ -1,0 +1,2367 @@
+// ==UserScript==
+// @name         Twitch Panels Telegram Spoiler + AutoChat
+// @namespace    twitch-panels-telegram-spoiler
+// @version      11.2
+// @description  Telegram-style particle blur + AutoChat with advanced features
+// @match        https://www.twitch.tv/*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const STORAGE_KEY = 'tm-autochat-v10';
+    const MAX_CHARS = 500;
+    const HOLD_SEND_MS = 1000; // Изменено на 1 секунду
+
+    function loadData() {
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
+        catch { return {}; }
+    }
+    function saveData(data) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+
+    function getSettings() {
+        const d = loadData();
+        return {
+            livePreview: d.livePreview !== false,
+            spoilerEnabled: d.spoilerEnabled !== false,
+            spoilerNeverReveal: !!d.spoilerNeverReveal,
+            antiSpamRandomizer: !!d.antiSpamRandomizer
+        };
+    }
+
+    const STYLE_ID = 'tm-telegram-spoiler-style';
+    const DENSITY = 300;
+    const MAX_PARTICLES = 2000;
+    const spawners = new Set();
+
+    function injectStyle() {
+        if (document.getElementById(STYLE_ID)) return;
+        const style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = `
+            .tm-spoiler-target {
+                position: relative !important;
+                overflow: hidden !important;
+                border-radius: var(--border-radius-medium, 4px);
+                cursor: pointer;
+                display: block;
+            }
+            .tm-spoiler-img {
+                filter: blur(22px) brightness(0.5);
+                display: block !important;
+                width: 100% !important;
+                height: auto !important;
+                transition: filter 0.45s ease !important;
+            }
+            .tm-spoiler-target.tm-revealed .tm-spoiler-img {
+                filter: blur(0px) brightness(1);
+            }
+            .tm-spoiler-canvas {
+                position: absolute;
+                inset: 0;
+                width: 100%;
+                height: 100%;
+                transition: opacity 0.4s ease;
+                pointer-events: none;
+                z-index: 10;
+            }
+            .tm-spoiler-target.tm-revealed .tm-spoiler-canvas {
+                opacity: 0;
+            }
+            body.tm-spoiler-off .tm-spoiler-img {
+                filter: none !important;
+                transform: none !important;
+            }
+            body.tm-spoiler-off .tm-spoiler-canvas {
+                display: none !important;
+            }
+            body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img {
+                filter: blur(22px) brightness(0.5) !important;
+            }
+            body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas {
+                opacity: 1 !important;
+            }
+
+            @keyframes tm-pulse {
+                0% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.6); border-color: rgba(255, 215, 0, 0.8); }
+                70% { box-shadow: 0 0 0 12px rgba(255, 215, 0, 0); border-color: rgba(255, 215, 0, 0.8); }
+                100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); border-color: #2f2f35; }
+            }
+            @keyframes tm-pop {
+                0% { transform: scale(0.8) translate(0, -50%); opacity: 0; }
+                50% { transform: scale(1.1) translate(0, -50%); opacity: 1; }
+                100% { transform: scale(1) translate(0, -50%); }
+            }
+
+            #tm-autochat-toggle-btn {
+                position: fixed;
+                top: 50%;
+                right: 0;
+                transform: translate(0, -50%);
+                width: 24px;
+                height: 60px;
+                background: #18181b;
+                border: 1px solid #2f2f35;
+                border-right: none;
+                border-radius: 8px 0 0 8px;
+                color: #efeff1;
+                z-index: 10000;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+                opacity: 0;
+                visibility: hidden;
+                pointer-events: none;
+                transition: right 0s linear, transform 0.3s ease, background 0.2s;
+                will-change: right, transform, opacity;
+            }
+            #tm-autochat-toggle-btn.visible {
+                opacity: 1;
+                visibility: visible;
+                pointer-events: auto;
+                animation: tm-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards, tm-pulse 1s ease-in-out 3 0.4s;
+            }
+            #tm-autochat-toggle-btn:hover {
+                background: #2f2f35;
+            }
+            #tm-autochat-toggle-btn.open {
+                transform: translate(-380px, -50%);
+                animation: none;
+            }
+
+            #tm-autochat-panel {
+                position: fixed;
+                top: 50%;
+                right: 0;
+                width: 380px;
+                height: 650px;
+                max-height: 85vh;
+                background: #18181b;
+                border: 1px solid #2f2f35;
+                border-radius: 12px 0 0 12px;
+                z-index: 1;
+                color: #efeff1;
+                font-family: Inter, Roobert, "Helvetica Neue", Helvetica, Arial, sans-serif;
+                box-shadow: -12px 0 40px rgba(0,0,0,.6);
+                user-select: none;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+                transform: translate(100%, -50%);
+                opacity: 0;
+                visibility: hidden;
+                pointer-events: none;
+                transition: right 0s linear, transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.3s ease, visibility 0.3s ease;
+                will-change: right, transform;
+            }
+            #tm-autochat-panel.open {
+                transform: translate(0, -50%);
+                opacity: 1;
+                visibility: visible;
+                pointer-events: auto;
+            }
+
+            #tm-autochat-panel .tm-ac-header {
+                padding: 10px 12px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                background: #0e0e10;
+                border-bottom: 1px solid #2f2f35;
+                gap: 10px;
+            }
+            .tm-ac-header-left {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                overflow: hidden;
+            }
+            #tm-autochat-panel .tm-ac-header-title {
+                font-size: 14px;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+                white-space: nowrap;
+                text-overflow: ellipsis;
+                overflow: hidden;
+            }
+            .tm-ac-header-right {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                flex-shrink: 0;
+            }
+            .tm-ac-status-pill {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                padding: 4px 8px;
+                border-radius: 12px;
+                background: #1a1a1d;
+                font-size: 11px;
+                font-weight: 500;
+                color: #adadb8;
+                white-space: nowrap;
+                transition: all 0.2s;
+            }
+            .tm-ac-status-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #6b6b70;
+            }
+            .tm-ac-status-pill.running { background: rgba(0, 245, 147, 0.1); color: #00f593; }
+            .tm-ac-status-pill.running .tm-ac-status-dot { background: #00f593; }
+            .tm-ac-status-pill.paused { background: rgba(255, 184, 0, 0.1); color: #ffb800; }
+            .tm-ac-status-pill.paused .tm-ac-status-dot { background: #ffb800; }
+            .tm-ac-status-pill.blocked { background: rgba(233, 25, 22, 0.1); color: #ff6b6b; }
+            .tm-ac-status-pill.blocked .tm-ac-status-dot { background: #ff6b6b; }
+            .tm-ac-status-pill.slowmode { background: rgba(145, 71, 255, 0.15); color: #bf94ff; }
+            .tm-ac-status-pill.slowmode .tm-ac-status-dot { background: #bf94ff; }
+
+            .tm-ac-header-btn {
+                background: #2f2f35;
+                border: none;
+                color: #efeff1;
+                width: 28px;
+                height: 28px;
+                border-radius: 6px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+                transition: background .15s;
+            }
+            .tm-ac-header-btn:hover { background: #3a3a3d; }
+            .tm-ac-header-btn.start { color: #00f593; }
+            .tm-ac-header-btn.stop { color: #ff6b6b; }
+            .tm-ac-header-btn:disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+
+            #tm-autochat-toggle {
+                background: #2f2f35;
+                border: none;
+                color: #adadb8;
+                width: 28px;
+                height: 28px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 18px;
+                line-height: 1;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: background .15s;
+            }
+            #tm-autochat-toggle:hover { background: #e91916; color: #fff; }
+
+            #tm-autochat-panel .tm-ac-tabs {
+                display: flex;
+                background: #0e0e10;
+                border-bottom: 1px solid #2f2f35;
+                flex-shrink: 0;
+            }
+            #tm-autochat-panel .tm-ac-tab {
+                flex: 1;
+                padding: 10px 0;
+                text-align: center;
+                font-size: 13px;
+                font-weight: 500;
+                color: #adadb8;
+                cursor: pointer;
+                border-bottom: 2px solid transparent;
+                transition: all .15s;
+            }
+            #tm-autochat-panel .tm-ac-tab:hover { color: #efeff1; background: #1a1a1d; }
+            #tm-autochat-panel .tm-ac-tab.active {
+                color: #bf94ff;
+                border-bottom-color: #9147ff;
+            }
+
+            #tm-autochat-panel .tm-ac-body {
+                padding: 16px;
+                overflow-y: auto;
+                flex: 1;
+            }
+            #tm-autochat-panel .tm-ac-tab-content { display: none; }
+            #tm-autochat-panel .tm-ac-tab-content.active { display: block; }
+
+            #tm-autochat-panel textarea {
+                width: 100%;
+                height: 150px;
+                min-height: 150px;
+                background: #0e0e10;
+                border: 1px solid #2f2f35;
+                border-radius: 8px;
+                color: #efeff1;
+                padding: 10px 12px;
+                resize: none !important;
+                font-size: 13px;
+                line-height: 1.45;
+                box-sizing: border-box;
+                outline: none;
+                transition: border-color .15s;
+                overflow-y: auto;
+            }
+            #tm-autochat-panel textarea:focus { border-color: #9147ff; }
+
+            #tm-ac-char-count {
+                text-align: right;
+                font-size: 11px;
+                color: #6b6b70;
+                margin-top: 4px;
+            }
+            #tm-ac-char-count.over { color: #ff4d4d; }
+
+            #tm-autochat-panel input[type="number"] {
+                width: 72px;
+                background: #0e0e10;
+                border: 1px solid #2f2f35;
+                border-radius: 6px;
+                color: #efeff1;
+                padding: 7px 10px;
+                font-size: 13px;
+                outline: none;
+            }
+            #tm-autochat-panel input[type="number"]:focus { border-color: #9147ff; }
+
+            #tm-autochat-panel .tm-ac-row {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                margin: 10px 0;
+                font-size: 13px;
+                color: #adadb8;
+            }
+            #tm-autochat-panel .tm-ac-hint { font-size: 11px; color: #6b6b70; }
+
+            #tm-autochat-panel .tm-ac-check {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin: 8px 0;
+                font-size: 13px;
+                color: #adadb8;
+                cursor: pointer;
+            }
+            #tm-autochat-panel .tm-ac-check.locked { opacity: 0.5; cursor: not-allowed; }
+            #tm-autochat-panel .tm-ac-check input {
+                width: 16px;
+                height: 16px;
+                accent-color: #9147ff;
+                cursor: pointer;
+            }
+            #tm-autochat-panel .tm-ac-check.locked input { cursor: not-allowed; }
+
+            #tm-autochat-panel .tm-ac-section {
+                margin-top: 14px;
+                padding-top: 12px;
+                border-top: 1px solid #2f2f35;
+            }
+            #tm-autochat-panel .tm-ac-section-title {
+                font-size: 12px;
+                font-weight: 600;
+                color: #bf94ff;
+                margin-bottom: 8px;
+                margin-top: 16px;
+            }
+            #tm-autochat-panel .tm-ac-desc {
+                font-size: 11px;
+                color: #6b6b70;
+                line-height: 1.4;
+                margin-top: 8px;
+            }
+
+            .tm-ac-hist-filter-wrapper {
+                position: relative;
+                width: 100%;
+                margin-bottom: 12px;
+                user-select: none;
+            }
+            .tm-ac-hist-filter-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                background: #0e0e10;
+                border: 1px solid #2f2f35;
+                border-radius: 6px;
+                padding: 8px 10px;
+                font-size: 13px;
+                color: #efeff1;
+                cursor: pointer;
+                transition: border-color 0.15s;
+            }
+            .tm-ac-hist-filter-header:hover { border-color: #9147ff; }
+            .tm-ac-hist-filter-list {
+                position: absolute;
+                top: 100%;
+                left: 0;
+                width: 100%;
+                background: #18181b;
+                border: 1px solid #2f2f35;
+                border-radius: 6px;
+                margin-top: 4px;
+                max-height: 200px;
+                overflow-y: auto;
+                z-index: 100;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                display: none;
+            }
+            .tm-ac-hist-filter-list.open { display: block; }
+            .tm-ac-hist-filter-list::-webkit-scrollbar { width: 6px; }
+            .tm-ac-hist-filter-list::-webkit-scrollbar-thumb { background: #3a3a3d; border-radius: 3px; }
+            .tm-ac-hist-filter-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 10px;
+                font-size: 13px;
+                color: #efeff1;
+                cursor: pointer;
+                transition: background 0.15s;
+            }
+            .tm-ac-hist-filter-item:hover { background: #2f2f35; }
+            .tm-ac-hist-filter-item.selected { background: #9147ff; }
+
+            #tm-ac-history-list {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+            #tm-ac-history-list::-webkit-scrollbar { width: 6px; }
+            #tm-ac-history-list::-webkit-scrollbar-thumb { background: #3a3a3d; border-radius: 3px; }
+
+            .tm-ac-hist-item {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                padding: 10px 12px;
+                background: #0e0e10;
+                border: 1px solid #2f2f35;
+                border-radius: 8px;
+                cursor: grab;
+                transition: border-color .15s, background .15s, opacity .15s;
+            }
+            .tm-ac-hist-item:active { cursor: grabbing; }
+            .tm-ac-hist-item.dragging { opacity: 0.4; }
+            .tm-ac-hist-item.drag-over { border-top: 3px solid #9147ff; margin-top: -3px; }
+            .tm-ac-hist-item:hover { border-color: #9147ff; background: #1a1a1d; }
+            .tm-ac-hist-item.pinned { border-color: #bf94ff; background: rgba(145, 71, 255, 0.08); }
+
+            .tm-ac-hist-channel {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 11px;
+                font-weight: 600;
+                color: #adadb8;
+                margin-bottom: 4px;
+                cursor: pointer;
+                transition: color 0.2s;
+                position: relative;
+            }
+            .tm-ac-hist-channel:hover { color: #efeff1; }
+
+            .tm-ac-hist-text {
+                font-size: 12px;
+                line-height: 1.6;
+                color: #c8c8d0;
+                max-height: 60px;
+                overflow: hidden;
+                word-break: break-word;
+                pointer-events: none;
+            }
+            .tm-ac-hist-text img.tm-emote { height: 22px; width: auto; vertical-align: middle; margin: 0 1px; display: inline-block; }
+
+            .tm-ac-hist-meta {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                font-size: 11px;
+                color: #6b6b70;
+            }
+            .tm-ac-hist-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+            .tm-ac-hist-btn {
+                background: #2f2f35;
+                border: none;
+                color: #efeff1;
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 11px;
+                font-weight: 500;
+                cursor: pointer;
+                white-space: nowrap;
+                transition: background .15s, opacity .15s;
+                touch-action: none;
+            }
+            .tm-ac-hist-btn:hover { background: #9147ff; }
+            .tm-ac-hist-btn.pin.active { background: #9147ff; color: #fff; }
+            .tm-ac-hist-btn.preview.active { background: #9147ff; color: #fff; }
+            .tm-ac-hist-btn.send { user-select: none; }
+            .tm-ac-hist-btn.send:hover { background: #00a865; }
+            .tm-ac-hist-btn.delete { user-select: none; }
+            .tm-ac-hist-btn.delete:hover { background: #e91916; }
+            .tm-ac-hist-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+            .tm-ac-hist-empty { text-align: center; padding: 30px 10px; color: #6b6b70; font-size: 13px; }
+
+            #tm-preview-container {
+                display: flex;
+                flex-direction: column;
+                padding: 4px 10px;
+                width: 100%;
+            }
+            .tm-preview-msg {
+                position: relative;
+                margin: 2px 0;
+                padding: 8px 28px 8px 10px;
+                background: #18181b;
+                border-left: 3px solid #9147ff;
+                border-radius: 4px;
+                font-size: 13px;
+                line-height: 1.45;
+                color: #efeff1;
+                animation: tmPreviewIn 0.2s ease;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+                word-break: break-word;
+            }
+            .tm-preview-msg.tm-live-preview { border-left-color: #00f593; background: #1a2421; }
+            .tm-preview-msg .tm-preview-badge {
+                display: inline-block;
+                background: #9147ff;
+                color: #fff;
+                font-size: 10px;
+                font-weight: 600;
+                padding: 1px 5px;
+                border-radius: 3px;
+                margin-right: 6px;
+                vertical-align: middle;
+            }
+            .tm-preview-msg.tm-live-preview .tm-preview-badge { background: #00c974; }
+            .tm-preview-msg .tm-preview-user { font-weight: 700; color: #bf94ff; margin-right: 2px; }
+            .tm-preview-msg.tm-live-preview .tm-preview-user { color: #00f593; }
+            .tm-preview-msg img.tm-emote { height: 28px; width: auto; vertical-align: middle; margin: 0 1px; }
+            .tm-preview-msg .tm-preview-close {
+                position: absolute;
+                top: 3px;
+                right: 6px;
+                background: transparent;
+                border: none;
+                color: #adadb8;
+                cursor: pointer;
+                font-size: 15px;
+                line-height: 1;
+                padding: 0 4px;
+            }
+            .tm-preview-msg .tm-preview-close:hover { color: #fff; }
+            @keyframes tmPreviewIn {
+                from { opacity: 0; transform: translateY(6px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+
+            /* MODALS */
+            .tm-modal-overlay {
+                position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 999999;
+                display: flex; align-items: center; justify-content: center;
+                opacity: 0; visibility: hidden; transition: all 0.2s;
+            }
+            .tm-modal-overlay.open { opacity: 1; visibility: visible; }
+            .tm-modal {
+                background: #18181b; border: 1px solid #2f2f35; border-radius: 8px;
+                width: 320px; padding: 20px; color: #efeff1; font-family: Inter, Roobert, "Helvetica Neue", Helvetica, Arial, sans-serif;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.5); transform: scale(0.9); transition: transform 0.2s;
+            }
+            .tm-modal-overlay.open .tm-modal { transform: scale(1); }
+            .tm-modal-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+            .tm-modal-text { font-size: 13px; color: #adadb8; margin-bottom: 20px; line-height: 1.5; }
+            .tm-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+            .tm-modal-btn { padding: 8px 16px; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: background 0.15s; }
+            .tm-modal-btn.cancel { background: #2f2f35; color: #efeff1; }
+            .tm-modal-btn.cancel:hover { background: #3a3a3d; }
+            .tm-modal-btn.confirm { background: #e91916; color: #fff; }
+            .tm-modal-btn.confirm:hover { background: #ff4d4d; }
+
+            /* BIG EDIT MODAL */
+            #tm-edit-modal {
+                position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000000;
+                display: flex; align-items: center; justify-content: center;
+                opacity: 0; visibility: hidden; transition: opacity 0.2s;
+            }
+            #tm-edit-modal.open { opacity: 1; visibility: visible; }
+            #tm-edit-modal .tm-edit-content {
+                background: #18181b; border: 1px solid #2f2f35; border-radius: 12px;
+                width: 800px; max-width: 90vw; height: 80vh; display: flex; flex-direction: column;
+                box-shadow: 0 12px 48px rgba(0,0,0,0.8); overflow: hidden;
+            }
+            #tm-edit-modal .tm-edit-header {
+                padding: 16px 20px; border-bottom: 1px solid #2f2f35; background: #0e0e10;
+                display: flex; justify-content: space-between; align-items: center;
+            }
+            #tm-edit-modal .tm-edit-header h3 { margin: 0; font-size: 16px; color: #bf94ff; }
+            #tm-edit-modal .tm-edit-body {
+                padding: 20px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;
+            }
+            #tm-edit-modal .tm-edit-textarea {
+                width: 100%; min-height: 150px; flex: 1; background: #0e0e10; border: 1px solid #2f2f35;
+                border-radius: 8px; color: #efeff1; padding: 12px; font-size: 14px; line-height: 1.5;
+                resize: vertical; outline: none; font-family: inherit;
+            }
+            #tm-edit-modal .tm-edit-textarea:focus { border-color: #9147ff; }
+            #tm-edit-modal .tm-variant-row {
+                display: flex; gap: 10px; align-items: flex-start;
+            }
+            #tm-edit-modal .tm-edit-actions {
+                padding: 16px 20px; border-top: 1px solid #2f2f35; background: #0e0e10;
+                display: flex; justify-content: space-between; align-items: center;
+            }
+            #tm-edit-modal .tm-edit-btn {
+                padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; border: none;
+            }
+            #tm-edit-modal .tm-edit-btn.save { background: #00a865; color: #fff; }
+            #tm-edit-modal .tm-edit-btn.add { background: #2f2f35; color: #fff; }
+            #tm-edit-modal .tm-edit-btn.cancel { background: #2f2f35; color: #adadb8; }
+
+            /* EMOTE PICKER MODAL */
+            #tm-emote-picker-modal {
+                position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000001;
+                display: flex; align-items: center; justify-content: center;
+                opacity: 0; visibility: hidden; transition: opacity 0.2s;
+            }
+            #tm-emote-picker-modal.open { opacity: 1; visibility: visible; }
+            #tm-emote-picker-modal .tm-ep-content {
+                background: #18181b; border: 1px solid #2f2f35; border-radius: 12px;
+                width: 500px; max-width: 90vw; height: 600px; max-height: 80vh;
+                display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0,0,0,0.8);
+            }
+            #tm-emote-picker-modal .tm-ep-header {
+                padding: 12px 16px; border-bottom: 1px solid #2f2f35; display: flex; gap: 10px; align-items: center;
+            }
+            #tm-emote-picker-modal input {
+                flex: 1; background: #0e0e10; border: 1px solid #2f2f35; border-radius: 6px;
+                color: #efeff1; padding: 8px 12px; font-size: 13px; outline: none;
+            }
+            #tm-emote-picker-modal input:focus { border-color: #9147ff; }
+            #tm-emote-picker-modal .tm-ep-close {
+                background: transparent; border: none; color: #adadb8; font-size: 20px; cursor: pointer;
+            }
+            #tm-emote-picker-modal .tm-ep-close:hover { color: #fff; }
+            #tm-emote-picker-modal .tm-ep-list {
+                flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-content: flex-start;
+            }
+            #tm-emote-picker-modal .tm-ep-list::-webkit-scrollbar { width: 6px; }
+            #tm-emote-picker-modal .tm-ep-list::-webkit-scrollbar-thumb { background: #3a3a3d; border-radius: 3px; }
+            #tm-emote-picker-modal img {
+                width: 48px; height: 48px; object-fit: contain; cursor: pointer; border-radius: 6px; padding: 4px;
+                transition: background 0.15s;
+            }
+            #tm-emote-picker-modal img:hover { background: #2f2f35; }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function applySpoilerSettings() {
+        const s = getSettings();
+        const off = !s.spoilerEnabled;
+        const neverReveal = s.spoilerEnabled && s.spoilerNeverReveal;
+        document.body.classList.toggle('tm-spoiler-off', off);
+        document.body.classList.toggle('tm-spoiler-never-reveal', neverReveal);
+        if (off || neverReveal) {
+            document.querySelectorAll('.tm-spoiler-target.tm-revealed').forEach(t => t.classList.remove('tm-revealed'));
+        }
+    }
+
+    function createSpawner(wrap, img, canvas) {
+        const ctx = canvas.getContext('2d', { alpha: true });
+        let w, h, particles = [];
+        const ALPHAS = [0.25, 0.45, 0.7, 1.0];
+
+        function initParticles() {
+            particles = [];
+            const count = Math.min(Math.floor((w * h) / DENSITY), MAX_PARTICLES);
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = (18 + Math.random() * 28) * devicePixelRatio;
+                particles.push({
+                    x: Math.random() * w, y: Math.random() * h,
+                    r: (0.35 + Math.random() * 1.8) * devicePixelRatio,
+                    a: ALPHAS[(Math.random() * ALPHAS.length) | 0],
+                    vx: Math.cos(angle) * speed * 0.022, vy: Math.sin(angle) * speed * 0.022,
+                    phase: Math.random() * Math.PI * 2
+                });
+            }
+        }
+
+        function resize() {
+            const r = wrap.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) return;
+            w = canvas.width = r.width * devicePixelRatio;
+            h = canvas.height = r.height * devicePixelRatio;
+            canvas.style.width = r.width + 'px';
+            canvas.style.height = r.height + 'px';
+            initParticles();
+        }
+
+        const ro = new ResizeObserver(resize);
+        ro.observe(wrap);
+        resize();
+
+        wrap.addEventListener('mouseenter', () => {
+            if (document.body.classList.contains('tm-spoiler-off')) return;
+            if (document.body.classList.contains('tm-spoiler-never-reveal')) return;
+            wrap.classList.add('tm-revealed');
+        });
+        wrap.addEventListener('mouseleave', () => {
+            wrap.classList.remove('tm-revealed');
+        });
+
+        return {
+            draw(t) {
+                if (document.body.classList.contains('tm-spoiler-off')) return;
+                if (document.body.classList.contains('tm-spoiler-never-reveal')) {
+                } else if (wrap.classList.contains('tm-revealed')) {
+                    return;
+                }
+                if (!w || !h) return;
+                ctx.clearRect(0, 0, w, h);
+                for (const p of particles) {
+                    p.x += p.vx; p.y += p.vy;
+                    if (p.x < 0) p.x = w; if (p.x > w) p.x = 0;
+                    if (p.y < 0) p.y = h; if (p.y > h) p.y = 0;
+                    const tw = 0.55 + 0.45 * Math.sin(t * 0.004 + p.phase);
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(255,255,255,${p.a * tw})`;
+                    ctx.fill();
+                }
+            }
+        };
+    }
+
+    function setupSpoilers() {
+        if (!getSettings().spoilerEnabled) return;
+        document.querySelectorAll('[data-test-selector="channel_panel_test_selector"] img').forEach(img => {
+            if (img.dataset.tmSpoilerInit) return;
+            img.dataset.tmSpoilerInit = 'true';
+
+            let wrap = img.parentElement;
+            if (!wrap.classList.contains('tm-spoiler-target')) {
+                wrap = document.createElement('div');
+                wrap.className = 'tm-spoiler-target';
+                if (img.parentNode) {
+                    img.parentNode.insertBefore(wrap, img);
+                    wrap.appendChild(img);
+                }
+            }
+            img.classList.add('tm-spoiler-img');
+
+            const canvas = document.createElement('canvas');
+            canvas.className = 'tm-spoiler-canvas';
+            wrap.appendChild(canvas);
+            spawners.add(createSpawner(wrap, img, canvas));
+        });
+    }
+
+    function tick(t) {
+        spawners.forEach(s => s.draw(t));
+        requestAnimationFrame(tick);
+    }
+
+    const emoteMap = new Map();
+    const channelEmoteNames = new Set();
+    let globalEmotesLoaded = false;
+
+    function collectEmotes() {
+        let changed = false;
+        const selectors = [
+            'img.seventv-chat-emote',
+            'img[class*="seventv"][alt]',
+            'img[data-emote-name]',
+            'img.chat-image[alt]',
+            'img.chat-line__message--emote'
+        ].join(',');
+        document.querySelectorAll(selectors).forEach(img => {
+            const name = (img.getAttribute('alt') || img.getAttribute('data-emote-name') || '').trim();
+            if (!name || name.length > 40) return;
+            const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
+            const srcset = img.getAttribute('srcset') || '';
+            if (!src && !srcset) return;
+
+            const existing = emoteMap.get(name);
+            if (existing) {
+                const existingScore = (existing.src ? 1 : 0) + (existing.srcset ? 1 : 0);
+                const newScore = (src ? 1 : 0) + (srcset ? 1 : 0);
+                if (existingScore >= newScore) return;
+            }
+
+            emoteMap.set(name, { src, srcset });
+            changed = true;
+        });
+        if (changed) {
+            try { document.dispatchEvent(new CustomEvent('tm-emotes-updated')); } catch {}
+        }
+    }
+
+    function addSevenTVEmotes(emotes, isChannel = false) {
+        if (!Array.isArray(emotes)) return false;
+        let changed = false;
+        for (const e of emotes) {
+            if (!e || !e.name || !e.id) continue;
+            const name = e.name;
+            if (name.length > 40) continue;
+
+            const existing = emoteMap.get(name);
+            if (existing && !isChannel) continue;
+            if (existing && existing.src && existing.src.includes(e.id)) continue;
+
+            const base = `https://cdn.7tv.app/emote/${e.id}`;
+            emoteMap.set(name, {
+                src: `${base}/2x.webp`,
+                srcset: `${base}/1x.webp 1x, ${base}/2x.webp 2x, ${base}/3x.webp 3x, ${base}/4x.webp 4x`
+            });
+            if (isChannel) channelEmoteNames.add(name);
+            changed = true;
+        }
+        return changed;
+    }
+
+    async function getTwitchUserId(login) {
+        if (!login) return null;
+        try {
+            const res = await fetch(`https://decapi.me/twitch/id/${encodeURIComponent(login)}`);
+            if (res.ok) {
+                const id = (await res.text()).trim();
+                if (/^\d+$/.test(id)) return id;
+            }
+        } catch {}
+        try {
+            const res = await fetch(`https://api.ivr.fi/v2/twitch/user?login=${encodeURIComponent(login)}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data) && data.length > 0 && data[0].id) return String(data[0].id);
+            }
+        } catch {}
+        return null;
+    }
+
+    async function fetchSevenTVEmotes(channelLogin) {
+        if (!channelLogin || ['directory', 'popout', 'videos', 'settings'].includes(channelLogin)) return;
+
+        let changed = false;
+
+        if (!globalEmotesLoaded) {
+            try {
+                const res = await fetch('https://7tv.io/v3/emote-sets/global');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.emotes && addSevenTVEmotes(data.emotes, false)) {
+                        changed = true;
+                        globalEmotesLoaded = true;
+                    }
+                }
+            } catch {}
+        }
+
+        try {
+            const twitchId = await getTwitchUserId(channelLogin);
+            if (twitchId) {
+                const res = await fetch(`https://7tv.io/v3/users/twitch/${encodeURIComponent(twitchId)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.emote_set && Array.isArray(data.emote_set.emotes)) {
+                        if (addSevenTVEmotes(data.emote_set.emotes, true)) changed = true;
+                    }
+                }
+            }
+        } catch {}
+
+        if (changed) {
+            try { document.dispatchEvent(new CustomEvent('tm-emotes-updated')); } catch {}
+        }
+    }
+
+    collectEmotes();
+    setInterval(collectEmotes, 2500);
+    setTimeout(() => {
+        const chat = document.querySelector('.seventv-chat-list, [data-test-selector="chat-scrollable-area__message-container"]');
+        if (chat) {
+            try { new MutationObserver(collectEmotes).observe(chat, { childList: true, subtree: true }); } catch {}
+        }
+    }, 2000);
+
+    (async () => {
+        const parts = window.location.pathname.split('/').filter(Boolean);
+        if (parts.length > 0 && !['directory', 'popout', 'videos', 'settings'].includes(parts[0])) {
+            await fetchSevenTVEmotes(parts[0].toLowerCase());
+        }
+    })();
+
+    function renderEmotes(text) {
+        if (!text) return '';
+        let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const names = Array.from(emoteMap.keys()).sort((a, b) => b.length - a.length);
+        for (const name of names) {
+            const data = emoteMap.get(name);
+            if (!data || (!data.src && !data.srcset)) continue;
+            const safeName = name.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+            const imgTag = data.srcset
+                ? `<img class="tm-emote seventv-chat-emote" srcset="${data.srcset}" alt="${safeName}" loading="lazy">`
+                : `<img class="tm-emote seventv-chat-emote" src="${data.src}" alt="${safeName}" loading="lazy">`;
+            const re = new RegExp(`(^|\\s)${escapeRegExp(name)}(?=\\s|$)`, 'g');
+            html = html.replace(re, `$1${imgTag}`);
+        }
+        return html;
+    }
+
+    function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function escapeHtml(str) {
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function getCurrentUsername() {
+        try {
+            const cookies = document.cookie.split(';').map(c => c.trim());
+            for (const c of cookies) {
+                if (c.startsWith('login=')) return decodeURIComponent(c.split('=')[1]);
+                if (c.startsWith('name=')) return decodeURIComponent(c.split('=')[1]);
+            }
+        } catch {}
+        const nameEl = document.querySelector('[data-a-target="user-display-name"]') || document.querySelector('[data-a-target="user-menu-toggle"]');
+        if (nameEl) {
+            const txt = (nameEl.textContent || nameEl.getAttribute('aria-label') || '').trim();
+            if (txt && txt.length < 30) return txt;
+        }
+        return null;
+    }
+
+    function getChannelInfo() {
+        let channelName = '';
+        const parts = window.location.pathname.split('/').filter(Boolean);
+        if (parts.length > 0 && !['directory', 'popout', 'videos', 'settings'].includes(parts[0])) {
+            channelName = parts[0].toLowerCase();
+        }
+
+        let displayName = channelName;
+        const nameEl = document.querySelector('[data-a-target="channel-info"] h1, h1[data-test-selector="channel-header-title"], .channel-info-content h1');
+        if (nameEl && nameEl.textContent.trim()) {
+            displayName = nameEl.textContent.trim();
+        }
+
+        return { name: channelName, displayName, avatar: getAvatarUrl(channelName) };
+    }
+
+    function getAvatarUrl(name) {
+        if (name && name !== 'unknown' && name !== 'all') {
+            const userEl = document.querySelector(`[data-a-user="${name.toLowerCase()}"]`);
+            if (userEl) {
+                const img = userEl.querySelector('img');
+                if (img && img.src) return img.src;
+            }
+            const sidebarLinks = document.querySelectorAll('a[href="/' + name + '"]');
+            for (let link of sidebarLinks) {
+                const img = link.querySelector('img');
+                if (img && img.src) return img.src;
+            }
+            return `https://unavatar.io/twitch/${encodeURIComponent(name)}`;
+        }
+        return 'https://static-cdn.jtvnw.net/user-default-pictures-uv/215b7342-def9-11e9-9a66-784f43822e80-profile_image-70x70.png';
+    }
+
+    function renderAvatar(name, size = 16) {
+        const url = getAvatarUrl(name);
+        const fallback = 'https://static-cdn.jtvnw.net/user-default-pictures-uv/215b7342-def9-11e9-9a66-784f43822e80-profile_image-70x70.png';
+        return `<img src="${url}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;" onerror="this.onerror=null;this.src='${fallback}';">`;
+    }
+
+    function findChatInput() { return document.querySelector('div[data-a-target="chat-input"]'); }
+    function findSendButton() { return document.querySelector('button[data-a-target="chat-send-button"]'); }
+
+    function getChatRestriction() {
+        const chatArea = document.querySelector('.chat-input') || document.querySelector('[data-a-target="chat-input"]')?.closest('.chat-input') || document.querySelector('.chat-room') || document.body;
+        const allText = (chatArea.innerText || '').toLowerCase();
+
+        if (/временно отстранен|отстранены от чата|временно отстранить/.test(allText)) {
+            const timeMatch = allText.match(/через\s+(\d+)\s*минут[уы]?\s*(\d+)?\s*секунд?/i) || allText.match(/через\s+(\d+)\s*секунд/i);
+            let remaining = '';
+            if (timeMatch) {
+                remaining = timeMatch[2] !== undefined ? `${timeMatch[1]} мин ${timeMatch[2]} сек` : (timeMatch[0].includes('секунд') ? `${timeMatch[1]} сек` : `${timeMatch[1]} мин`);
+            }
+            return { type: 'timeout', message: remaining ? `Вы временно отстранены\nОсталось: ${remaining}` : 'Вы временно отстранены от чата' };
+        }
+        if (/you are timed out|timed out from chat/i.test(allText)) return { type: 'timeout', message: 'You are timed out' };
+        if (/вы забанены|you are banned|banned from this channel/i.test(allText)) return { type: 'ban', message: 'Вы забанены в этом чате' };
+        return null;
+    }
+
+    function getSlowModeInfo() {
+        const chatArea = document.querySelector('.chat-room') || document.querySelector('[data-test-selector="chat-room-component-layout"]') || document.body;
+        const text = (chatArea.innerText || '');
+        const ruMatch = text.match(/медленный режим[^0-9]*(\d+)\s*секунд/i);
+        if (ruMatch) return parseInt(ruMatch[1], 10);
+        const enMatch = text.match(/slow mode[^0-9]*(\d+)\s*second/i);
+        if (enMatch) return parseInt(enMatch[1], 10);
+        return 0;
+    }
+
+    function addInvisibleChars(text) {
+        if (!getSettings().antiSpamRandomizer) return text;
+        const chars = ['\u200b', '\u200c', '\u200d', '\u2060'];
+        const c = chars[Math.floor(Math.random() * chars.length)];
+        return text + c + c;
+    }
+
+    async function sendChatMessage(text) {
+        const restriction = getChatRestriction();
+        if (restriction) return { ok: false, restriction };
+
+        const input = findChatInput();
+        const btn = findSendButton();
+        if (!input) return { ok: false, restriction: { type: 'noinput', message: 'Поле чата не найдено' } };
+
+        const finalText = addInvisibleChars(text);
+
+        input.focus();
+        const dt = new DataTransfer();
+        dt.setData('text/plain', finalText);
+        input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+        await new Promise(r => setTimeout(r, 200));
+
+        if (btn && !btn.disabled) {
+            btn.click();
+            return { ok: true };
+        }
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        return { ok: true };
+    }
+
+    function getRandomDelay(baseSec) {
+        const slowMode = getSlowModeInfo();
+        const actualBase = Math.max(baseSec, slowMode > 0 ? slowMode + 1 : 0);
+        const variation = Math.max(0.8, actualBase * 0.35);
+        const min = Math.max(1.5, actualBase - variation);
+        const max = actualBase + variation;
+        return (min + Math.random() * (max - min)) * 1000;
+    }
+
+    function playBeep() {
+        try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        } catch {}
+    }
+
+    let livePreviewEl = null;
+    let historyPreviewEl = null;
+    let currentTab = 'send';
+    let isRunning = false;
+    let isPausedByUser = false;
+    let isAutoSending = false;
+    let currentFilter = 'all';
+    let lastKnownChannel = '';
+    let activeHistoryIdx = -1;
+    let currentEmoteTarget = null;
+
+    function getChatList() {
+        return document.querySelector('.seventv-chat-list') ||
+               document.querySelector('[data-test-selector="chat-scrollable-area__message-container"]') ||
+               document.querySelector('.chat-scrollable-area__message-container') ||
+               document.querySelector('.chat-list');
+    }
+
+    function getPreviewContainer() {
+        let container = document.getElementById('tm-preview-container');
+        if (container) return container;
+        const chatList = getChatList();
+        if (chatList) {
+            container = document.createElement('div');
+            container.id = 'tm-preview-container';
+            chatList.appendChild(container);
+            return container;
+        }
+        return null;
+    }
+
+    function removeLivePreview() {
+        if (livePreviewEl) { livePreviewEl.remove(); livePreviewEl = null; }
+        const container = document.getElementById('tm-preview-container');
+        if (container) container.querySelectorAll('.tm-live-preview').forEach(el => el.remove());
+    }
+
+    function removeHistoryPreview() {
+        if (historyPreviewEl) { historyPreviewEl.remove(); historyPreviewEl = null; }
+        const container = document.getElementById('tm-preview-container');
+        if (container) container.querySelectorAll('.tm-preview-msg:not(.tm-live-preview)').forEach(el => el.remove());
+        document.querySelectorAll('.tm-ac-hist-btn.preview.active').forEach(b => b.classList.remove('active'));
+    }
+
+    function updateLivePreview(text, username) {
+        const s = getSettings();
+        if (!s.livePreview || currentTab !== 'send' || isRunning || !text.trim()) {
+            removeLivePreview();
+            return;
+        }
+        const container = getPreviewContainer();
+        if (!container) return;
+
+        const name = username || getCurrentUsername() || 'You';
+        const html = `
+            <span class="tm-preview-badge">LIVE</span>
+            <span class="tm-preview-user">${escapeHtml(name)}</span>:
+            <span class="tm-preview-body">${renderEmotes(text)}</span>
+        `;
+        if (livePreviewEl && livePreviewEl.isConnected) {
+            livePreviewEl.innerHTML = html;
+        } else {
+            removeLivePreview();
+            const el = document.createElement('div');
+            el.className = 'tm-preview-msg tm-live-preview';
+            el.innerHTML = html;
+            container.appendChild(el);
+            livePreviewEl = el;
+            el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+
+    function showHistoryPreview(text, username) {
+        if (historyPreviewEl && historyPreviewEl.isConnected) {
+            removeHistoryPreview();
+            return false;
+        }
+        removeHistoryPreview();
+        const container = getPreviewContainer();
+        if (!container) return false;
+
+        const name = username || getCurrentUsername() || 'You';
+        const el = document.createElement('div');
+        el.className = 'tm-preview-msg';
+        el.innerHTML = `
+            <span class="tm-preview-badge">PREVIEW</span>
+            <span class="tm-preview-user">${escapeHtml(name)}</span>:
+            <span class="tm-preview-body">${renderEmotes(text)}</span>
+            <button class="tm-preview-close" title="Закрыть">×</button>
+        `;
+        el.querySelector('.tm-preview-close').addEventListener('click', removeHistoryPreview);
+        container.appendChild(el);
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        historyPreviewEl = el;
+        setTimeout(() => { if (historyPreviewEl === el) removeHistoryPreview(); }, 20000);
+        return true;
+    }
+
+    function showConfirmModal(title, message, onConfirm) {
+        let overlay = document.getElementById('tm-modal-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'tm-modal-overlay';
+            overlay.className = 'tm-modal-overlay';
+            overlay.innerHTML = `
+                <div class="tm-modal">
+                    <div class="tm-modal-title"></div>
+                    <div class="tm-modal-text"></div>
+                    <div class="tm-modal-actions">
+                        <button class="tm-modal-btn cancel">Отмена</button>
+                        <button class="tm-modal-btn confirm">OK</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        }
+        const titleEl = overlay.querySelector('.tm-modal-title');
+        const textEl = overlay.querySelector('.tm-modal-text');
+        const cancelBtn = overlay.querySelector('.cancel');
+        const confirmBtn = overlay.querySelector('.confirm');
+
+        titleEl.textContent = title;
+        textEl.textContent = message;
+        overlay.classList.add('open');
+
+        const close = () => {
+            overlay.classList.remove('open');
+            confirmBtn.onclick = null;
+            cancelBtn.onclick = null;
+        };
+
+        confirmBtn.onclick = () => { onConfirm(); close(); };
+        cancelBtn.onclick = close;
+        overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    }
+
+    function createAutoChatUI() {
+        if (document.getElementById('tm-autochat-panel')) return;
+
+        const data = loadData();
+        const settings = getSettings();
+        const username = getCurrentUsername();
+
+        const toggleSidebarBtn = document.createElement('button');
+        toggleSidebarBtn.id = 'tm-autochat-toggle-btn';
+        toggleSidebarBtn.innerHTML = '◀';
+        document.body.appendChild(toggleSidebarBtn);
+
+        const panel = document.createElement('div');
+        panel.id = 'tm-autochat-panel';
+        panel.innerHTML = `
+            <div class="tm-ac-header">
+                <div class="tm-ac-header-left">
+                    <span class="tm-ac-header-title">AutoChat ${username ? '• ' + username : ''}</span>
+                </div>
+                <div class="tm-ac-header-right">
+                    <div class="tm-ac-status-pill slowmode" id="tm-ac-slowmode-pill" style="display:none">
+                        <span class="tm-ac-status-dot"></span>
+                        <span>КД: <span id="tm-ac-slowmode-text"></span>с</span>
+                    </div>
+                    <div class="tm-ac-status-pill" id="tm-ac-status">
+                        <span class="tm-ac-status-dot"></span>
+                        <span class="tm-ac-status-text">Стоп</span>
+                    </div>
+                    <button class="tm-ac-header-btn start" id="tm-ac-start" title="Старт">▶</button>
+                    <button class="tm-ac-header-btn stop" id="tm-ac-stop" style="display:none" title="Стоп">■</button>
+                    <button id="tm-autochat-toggle" title="Закрыть">×</button>
+                </div>
+            </div>
+
+            <div class="tm-ac-tabs">
+                <div class="tm-ac-tab active" data-tab="send">Отправка</div>
+                <div class="tm-ac-tab" data-tab="history">История</div>
+                <div class="tm-ac-tab" data-tab="settings">Настройки</div>
+            </div>
+
+            <div class="tm-ac-body">
+                <div class="tm-ac-tab-content active" id="tm-tab-send">
+                    <textarea id="tm-ac-msg" placeholder="Введите сообщение или пасту..." maxlength="${MAX_CHARS}"></textarea>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <button id="tm-ac-emotes-btn" class="tm-ac-hist-btn" style="font-size:12px; padding:4px 8px;">😀 Смайлы</button>
+                        <div id="tm-ac-char-count">0 / ${MAX_CHARS}</div>
+                    </div>
+
+                    <div class="tm-ac-row" style="margin-top:10px;">
+                        <label>Интервал ~сек</label>
+                        <input type="number" id="tm-ac-interval" value="5" min="2" max="3600">
+                        <span class="tm-ac-hint">± рандом</span>
+                    </div>
+                </div>
+
+                <div class="tm-ac-tab-content" id="tm-tab-history">
+                    <div class="tm-ac-hist-filter-wrapper" id="tm-ac-history-filter-wrapper">
+                        <div class="tm-ac-hist-filter-header" id="tm-ac-history-filter-header">
+                            <span id="tm-ac-history-filter-text">Все стримеры</span>
+                            <span>▼</span>
+                        </div>
+                        <div class="tm-ac-hist-filter-list" id="tm-ac-history-filter-list"></div>
+                    </div>
+                    <div id="tm-ac-history-list"></div>
+                </div>
+
+                <div class="tm-ac-tab-content" id="tm-tab-settings">
+                    <div class="tm-ac-section-title">Чат</div>
+                    <label class="tm-ac-check">
+                        <input type="checkbox" id="tm-ac-live-preview" ${settings.livePreview ? 'checked' : ''}>
+                        <span>Показывать Live превью</span>
+                    </label>
+                    <label class="tm-ac-check">
+                        <input type="checkbox" id="tm-ac-antispam" ${settings.antiSpamRandomizer ? 'checked' : ''}>
+                        <span>Невидимые символы (Анти-спам)</span>
+                    </label>
+
+                    <div class="tm-ac-section-title">Описание (баннеры)</div>
+                    <label class="tm-ac-check">
+                        <input type="checkbox" id="tm-ac-spoiler-enabled" ${settings.spoilerEnabled ? 'checked' : ''}>
+                        <span>Включить блюр баннерам</span>
+                    </label>
+                    <label class="tm-ac-check" id="tm-ac-spoiler-never-row">
+                        <input type="checkbox" id="tm-ac-spoiler-never" ${settings.spoilerNeverReveal ? 'checked' : ''}>
+                        <span>Никогда не показывать (даже при наведении)</span>
+                    </label>
+
+                    <div class="tm-ac-section-title">Экспорт / Импорт</div>
+                    <div style="display:flex; gap:8px;">
+                        <button id="tm-export-btn" class="tm-ac-hist-btn" style="flex:1; padding:8px;">💾 Скачать</button>
+                        <button id="tm-import-btn" class="tm-ac-hist-btn" style="flex:1; padding:8px;">📂 Загрузить</button>
+                        <input type="file" id="tm-import-file" accept=".json" style="display:none;">
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(panel);
+
+        const editModal = document.createElement('div');
+        editModal.id = 'tm-edit-modal';
+        editModal.innerHTML = `
+            <div class="tm-edit-content">
+                <div class="tm-edit-header">
+                    <h3>Редактирование пасты</h3>
+                    <button class="tm-edit-btn cancel" id="tm-edit-close-btn" style="padding:4px 8px;">✕</button>
+                </div>
+                <div class="tm-edit-body" id="tm-edit-variants-container"></div>
+                <div class="tm-edit-actions">
+                    <button class="tm-edit-btn add" id="tm-edit-add-btn">+ Добавить вариант</button>
+                    <div style="display:flex; gap:10px;">
+                        <button class="tm-edit-btn cancel" id="tm-edit-cancel-btn">Отмена</button>
+                        <button class="tm-edit-btn save" id="tm-edit-save-btn">Сохранить</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(editModal);
+
+        const emoteModal = document.createElement('div');
+        emoteModal.id = 'tm-emote-picker-modal';
+        emoteModal.innerHTML = `
+            <div class="tm-ep-content">
+                <div class="tm-ep-header">
+                    <input type="text" id="tm-ep-search" placeholder="Поиск смайлов...">
+                    <button class="tm-ep-close" id="tm-ep-close-btn">✕</button>
+                </div>
+                <div class="tm-ep-list" id="tm-ep-list"></div>
+            </div>
+        `;
+        document.body.appendChild(emoteModal);
+
+        function closePanel() {
+            panel.classList.remove('open');
+            toggleSidebarBtn.classList.remove('open');
+            toggleSidebarBtn.innerHTML = '◀';
+        }
+
+        let chatVisibleTimer = null;
+        let isChatCurrentlyVisible = false;
+        let isChatWaiting = false;
+
+        function animateLoop() {
+            const chatInput = document.querySelector('div[data-a-target="chat-input"]');
+            const chatRoom = document.querySelector('section[data-test-selector="chat-room-component-layout"]') || document.querySelector('.chat-room');
+
+            let isChatValid = false;
+            if (chatRoom && chatInput) {
+                const roomRect = chatRoom.getBoundingClientRect();
+                const inputRect = chatInput.getBoundingClientRect();
+                const roomStyle = window.getComputedStyle(chatRoom);
+
+                // Улучшенная проверка на офлайн
+                const isOffline =
+                    !!document.querySelector('[data-a-target="player-overlay-content-gate"]') ||
+                    !!document.querySelector('.offline-indicator') ||
+                    !!document.querySelector('[data-a-target="channel-header-offline-indicator"]') ||
+                    document.title.toLowerCase().includes('offline') ||
+                    (chatRoom.innerText || '').toLowerCase().includes('чат недоступен') ||
+                    (chatRoom.innerText || '').toLowerCase().includes('chat is disabled') ||
+                    inputRect.width === 0 || inputRect.height === 0;
+
+                if (roomRect.width > 100 && roomRect.height > 100 && roomRect.left < window.innerWidth &&
+                    roomStyle.display !== 'none' && roomStyle.visibility !== 'hidden' && roomStyle.opacity !== '0' &&
+                    !chatRoom.classList.contains('collapsed') && !isOffline) {
+                    isChatValid = true;
+                }
+            }
+
+            if (isChatValid) {
+                const rightOffset = window.innerWidth - chatRoom.getBoundingClientRect().left;
+                toggleSidebarBtn.style.right = rightOffset + 'px';
+                panel.style.right = rightOffset + 'px';
+
+                if (!isChatCurrentlyVisible && !isChatWaiting) {
+                    isChatWaiting = true;
+                    chatVisibleTimer = setTimeout(() => {
+                        isChatCurrentlyVisible = true;
+                        isChatWaiting = false;
+                        const checkInput = document.querySelector('div[data-a-target="chat-input"]');
+                        const checkRoom = document.querySelector('section[data-test-selector="chat-room-component-layout"]') || document.querySelector('.chat-room');
+                        const checkOffline = !!document.querySelector('[data-a-target="player-overlay-content-gate"]') || !!document.querySelector('.offline-indicator');
+                        if (checkInput && checkRoom && checkInput.getBoundingClientRect().width > 0 && !checkOffline) {
+                            toggleSidebarBtn.classList.add('visible');
+                        } else {
+                            isChatCurrentlyVisible = false;
+                        }
+                    }, 4000);
+                }
+            } else {
+                if (isChatWaiting) { clearTimeout(chatVisibleTimer); chatVisibleTimer = null; isChatWaiting = false; }
+                if (isChatCurrentlyVisible) {
+                    isChatCurrentlyVisible = false;
+                    toggleSidebarBtn.classList.remove('visible');
+                    if (panel.classList.contains('open')) closePanel();
+                }
+                toggleSidebarBtn.classList.remove('visible');
+                if (panel.classList.contains('open')) closePanel();
+            }
+            requestAnimationFrame(animateLoop);
+        }
+        requestAnimationFrame(animateLoop);
+
+        toggleSidebarBtn.addEventListener('click', (e) => {
+            if (!e.isTrusted) return;
+            e.preventDefault(); e.stopPropagation();
+            if (!isChatCurrentlyVisible) return;
+            panel.classList.toggle('open');
+            toggleSidebarBtn.classList.toggle('open');
+            toggleSidebarBtn.innerHTML = panel.classList.contains('open') ? '▶' : '◀';
+        });
+
+        panel.querySelector('#tm-autochat-toggle').addEventListener('click', (e) => { e.stopPropagation(); closePanel(); });
+
+        document.addEventListener('click', (e) => {
+            if (!panel.classList.contains('open')) return;
+            if (e.target.closest('#tm-autochat-panel')) return;
+            if (e.target.closest('#tm-autochat-toggle-btn')) return;
+            if (e.target.closest('#tm-modal-overlay')) return;
+            if (e.target.closest('#tm-edit-modal')) return;
+            if (e.target.closest('#tm-emote-picker-modal')) return;
+            closePanel();
+        });
+
+        const tabs = panel.querySelectorAll('.tm-ac-tab');
+        const contents = panel.querySelectorAll('.tm-ac-tab-content');
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabs.forEach(t => t.classList.remove('active'));
+                contents.forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                const target = tab.dataset.tab;
+                document.getElementById('tm-tab-' + target).classList.add('active');
+                currentTab = target;
+                if (target === 'send') {
+                    updateLivePreview(msgEl.value, username);
+                    removeHistoryPreview();
+                } else {
+                    removeLivePreview();
+                    if (target === 'history') renderHistory();
+                }
+            });
+        });
+
+        const msgEl = panel.querySelector('#tm-ac-msg');
+        const intervalEl = panel.querySelector('#tm-ac-interval');
+        const startBtn = panel.querySelector('#tm-ac-start');
+        const stopBtn = panel.querySelector('#tm-ac-stop');
+        const statusEl = panel.querySelector('#tm-ac-status');
+        const historyList = panel.querySelector('#tm-ac-history-list');
+        const charCount = panel.querySelector('#tm-ac-char-count');
+        const livePreviewCheck = panel.querySelector('#tm-ac-live-preview');
+        const antispamCheck = panel.querySelector('#tm-ac-antispam');
+        const spoilerEnabledCheck = panel.querySelector('#tm-ac-spoiler-enabled');
+        const spoilerNeverCheck = panel.querySelector('#tm-ac-spoiler-never');
+        const spoilerNeverRow = panel.querySelector('#tm-ac-spoiler-never-row');
+        const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill');
+        const slowmodeText = panel.querySelector('#tm-ac-slowmode-text');
+
+        const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper');
+        const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
+        const filterText = panel.querySelector('#tm-ac-history-filter-text');
+        const filterList = panel.querySelector('#tm-ac-history-filter-list');
+
+        // --- EMOTE PICKER LOGIC ---
+        const emoteSearch = emoteModal.querySelector('#tm-ep-search');
+        const emoteList = emoteModal.querySelector('#tm-ep-list');
+
+        function openEmotePicker(targetTextarea) {
+            currentEmoteTarget = targetTextarea;
+            emoteModal.classList.add('open');
+            emoteSearch.value = '';
+            renderEmotePickerList('');
+            emoteSearch.focus();
+        }
+
+        function renderEmotePickerList(query) {
+            emoteList.innerHTML = '';
+            const emotes = Array.from(emoteMap.entries()).filter(([name]) => channelEmoteNames.has(name));
+            const filtered = emotes.filter(([name]) => name.toLowerCase().includes(query.toLowerCase()));
+
+            if (filtered.length === 0) {
+                emoteList.innerHTML = '<div style="color:#adadb8; font-size:13px; padding:20px; width:100%; text-align:center;">Смайлы не найдены</div>';
+            } else {
+                filtered.forEach(([name, data]) => {
+                    const img = document.createElement('img');
+                    if (data.srcset) img.srcset = data.srcset;
+                    if (data.src) img.src = data.src;
+                    img.title = name;
+                    img.addEventListener('click', () => {
+                        if (currentEmoteTarget) {
+                            const start = currentEmoteTarget.selectionStart;
+                            const end = currentEmoteTarget.selectionEnd;
+                            const text = currentEmoteTarget.value;
+                            currentEmoteTarget.value = text.substring(0, start) + ' ' + name + ' ' + text.substring(end);
+                            currentEmoteTarget.selectionStart = currentEmoteTarget.selectionEnd = start + name.length + 2;
+                            currentEmoteTarget.focus();
+                        }
+                    });
+                    emoteList.appendChild(img);
+                });
+            }
+        }
+
+        emoteSearch.addEventListener('input', (e) => renderEmotePickerList(e.target.value));
+        emoteModal.querySelector('#tm-ep-close-btn').addEventListener('click', () => emoteModal.classList.remove('open'));
+        emoteModal.addEventListener('click', (e) => { if (e.target === emoteModal) emoteModal.classList.remove('open'); });
+
+        panel.querySelector('#tm-ac-emotes-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openEmotePicker(msgEl);
+        });
+        // --------------------------
+
+        if (data.msg) msgEl.value = data.msg.slice(0, MAX_CHARS);
+        if (data.interval) intervalEl.value = data.interval;
+
+        filterHeader.addEventListener('click', (e) => { e.stopPropagation(); filterList.classList.toggle('open'); });
+        document.addEventListener('click', (e) => { if (!filterWrapper.contains(e.target)) filterList.classList.remove('open'); });
+
+        function updateCharCount() {
+            const len = msgEl.value.length;
+            charCount.textContent = `${len} / ${MAX_CHARS}`;
+            charCount.classList.toggle('over', len >= MAX_CHARS);
+        }
+        updateCharCount();
+
+        msgEl.addEventListener('input', () => {
+            if (msgEl.value.length > MAX_CHARS) msgEl.value = msgEl.value.slice(0, MAX_CHARS);
+            updateCharCount();
+            saveBasic();
+            updateLivePreview(msgEl.value, username);
+            activeHistoryIdx = -1;
+        });
+
+        function saveBasic() {
+            const d = loadData();
+            d.msg = msgEl.value;
+            d.interval = intervalEl.value;
+            saveData(d);
+        }
+        intervalEl.addEventListener('change', saveBasic);
+
+        function updateSpoilerLock() {
+            const enabled = spoilerEnabledCheck.checked;
+            spoilerNeverCheck.disabled = !enabled;
+            spoilerNeverRow.classList.toggle('locked', !enabled);
+        }
+
+        function saveSettings() {
+            const d = loadData();
+            d.livePreview = livePreviewCheck.checked;
+            d.antiSpamRandomizer = antispamCheck.checked;
+            d.spoilerEnabled = spoilerEnabledCheck.checked;
+            d.spoilerNeverReveal = spoilerNeverCheck.checked;
+            saveData(d);
+            applySpoilerSettings();
+            updateSpoilerLock();
+            updateLivePreview(msgEl.value, username);
+        }
+
+        livePreviewCheck.addEventListener('change', saveSettings);
+        antispamCheck.addEventListener('change', saveSettings);
+        spoilerEnabledCheck.addEventListener('change', saveSettings);
+        spoilerNeverCheck.addEventListener('change', saveSettings);
+        updateSpoilerLock();
+
+        panel.querySelector('#tm-export-btn').addEventListener('click', () => {
+            const d = loadData();
+            const blob = new Blob([JSON.stringify(d.history || [], null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `autochat_history_${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        const fileInput = panel.querySelector('#tm-import-file');
+        panel.querySelector('#tm-import-btn').addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const imported = JSON.parse(ev.target.result);
+                    if (Array.isArray(imported)) {
+                        const d = loadData();
+                        const currentHist = getHistory();
+                        const newHist = [...imported, ...currentHist.filter(h => !imported.some(i => i.variants[0] === h.variants[0]))];
+                        d.history = newHist;
+                        saveData(d);
+                        renderHistory();
+                        alert('Успешно импортировано!');
+                    }
+                } catch { alert('Ошибка чтения файла'); }
+            };
+            reader.readAsText(file);
+            fileInput.value = '';
+        });
+
+        function getHistory() {
+            const d = loadData();
+            let hist = d.history || [];
+            let changed = false;
+            hist.forEach(h => {
+                if (!h.variants) {
+                    h.variants = [h.text || ''];
+                    delete h.text;
+                    changed = true;
+                }
+                if (!h.pinnedIn) {
+                    h.pinnedIn = [];
+                    changed = true;
+                }
+            });
+            if (changed) { d.history = hist; saveData(d); }
+            return hist;
+        }
+
+        function addToHistory(variants) {
+            if (!variants || variants.length === 0 || !variants[0].trim()) return;
+            let hist = getHistory();
+            const ch = getChannelInfo();
+            const mainText = variants[0];
+
+            const existingIdx = hist.findIndex(h => h.variants[0] === mainText && (!h.channel || h.channel.name === ch.name));
+            if (existingIdx !== -1) hist.splice(existingIdx, 1);
+
+            hist.unshift({ variants, pinnedIn: [], chars: mainText.length, channel: ch });
+            const d = loadData();
+            d.history = hist;
+            saveData(d);
+            renderHistory();
+        }
+
+        function deleteHistoryItem(idx) {
+            const hist = getHistory();
+            if (!hist[idx]) return;
+            hist.splice(idx, 1);
+            if (activeHistoryIdx === idx) activeHistoryIdx = -1;
+            else if (activeHistoryIdx > idx) activeHistoryIdx--;
+
+            const d = loadData();
+            d.history = hist;
+            saveData(d);
+            renderHistory();
+        }
+
+        function togglePin(idx) {
+            const hist = getHistory();
+            if (!hist[idx]) return;
+            if (!hist[idx].pinnedIn) hist[idx].pinnedIn = [];
+            const i = hist[idx].pinnedIn.indexOf(currentFilter);
+            if (i > -1) hist[idx].pinnedIn.splice(i, 1);
+            else hist[idx].pinnedIn.push(currentFilter);
+            const d = loadData();
+            d.history = hist;
+            saveData(d);
+            renderHistory();
+        }
+
+        function openEditModal(idx) {
+            const entry = getHistory()[idx];
+            const variantsContainer = editModal.querySelector('#tm-edit-variants-container');
+            variantsContainer.innerHTML = '';
+
+            const addVariantInput = (val = '') => {
+                const row = document.createElement('div');
+                row.className = 'tm-variant-row';
+                row.innerHTML = `
+                    <textarea class="tm-edit-textarea" maxlength="${MAX_CHARS}">${escapeHtml(val)}</textarea>
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <button class="tm-edit-btn add-emote-btn" style="padding:6px 10px; font-size:16px;" title="Добавить смайл">😀</button>
+                        <button class="tm-edit-btn cancel remove-btn" style="padding:6px 10px;">✕</button>
+                    </div>
+                `;
+                row.querySelector('.remove-btn').addEventListener('click', () => {
+                    if (variantsContainer.children.length > 1) row.remove();
+                });
+                const ta = row.querySelector('textarea');
+                row.querySelector('.add-emote-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openEmotePicker(ta);
+                });
+                variantsContainer.appendChild(row);
+            };
+
+            const currentVariants = entry.variants || [''];
+            currentVariants.forEach(v => addVariantInput(v));
+
+            editModal.classList.add('open');
+
+            const closeModal = () => editModal.classList.remove('open');
+
+            const addBtn = editModal.querySelector('#tm-edit-add-btn');
+            const saveBtn = editModal.querySelector('#tm-edit-save-btn');
+            const cancelBtn = editModal.querySelector('#tm-edit-cancel-btn');
+            const closeBtn = editModal.querySelector('#tm-edit-close-btn');
+
+            const newAddBtn = addBtn.cloneNode(true);
+            addBtn.replaceWith(newAddBtn);
+            newAddBtn.addEventListener('click', () => addVariantInput(''));
+
+            const handleSave = () => {
+                const textareas = variantsContainer.querySelectorAll('textarea');
+                const newVariants = [];
+                textareas.forEach(t => {
+                    const val = t.value.trim();
+                    if (val) newVariants.push(val);
+                });
+                if (newVariants.length > 0) {
+                    const hist = getHistory();
+                    hist[idx].variants = newVariants;
+                    hist[idx].chars = newVariants[0].length;
+                    const d = loadData();
+                    d.history = hist;
+                    saveData(d);
+                }
+                closeModal();
+                renderHistory();
+            };
+
+            const newSaveBtn = saveBtn.cloneNode(true);
+            saveBtn.replaceWith(newSaveBtn);
+            newSaveBtn.addEventListener('click', handleSave);
+
+            const newCancelBtn = cancelBtn.cloneNode(true);
+            cancelBtn.replaceWith(newCancelBtn);
+            newCancelBtn.addEventListener('click', closeModal);
+
+            const newCloseBtn = closeBtn.cloneNode(true);
+            closeBtn.replaceWith(newCloseBtn);
+            newCloseBtn.addEventListener('click', closeModal);
+        }
+
+        function renderHistory() {
+            const hist = getHistory();
+            const indexedHist = hist.map((h, i) => ({ ...h, originalIdx: i }));
+            indexedHist.sort((a, b) => {
+                const aPin = (a.pinnedIn || []).includes(currentFilter);
+                const bPin = (b.pinnedIn || []).includes(currentFilter);
+                return (bPin ? 1 : 0) - (aPin ? 1 : 0);
+            });
+
+            const uniqueChannels = new Map();
+            hist.forEach(h => {
+                if (h.channel && h.channel.name) {
+                    if (h.channel.name === 'all') uniqueChannels.set('all', { name: 'all', displayName: 'Везде', avatar: '' });
+                    else if (h.channel.name !== 'unknown') uniqueChannels.set(h.channel.name, h.channel);
+                }
+            });
+
+            let optionsHtml = `<div class="tm-ac-hist-filter-item ${currentFilter === 'all' ? 'selected' : ''}" data-val="all">${renderAvatar('', 20)} Все стримеры</div>`;
+            const hasUnknown = hist.some(h => !h.channel || !h.channel.name || h.channel.name === 'unknown');
+            if (hasUnknown) optionsHtml += `<div class="tm-ac-hist-filter-item ${currentFilter === 'unknown' ? 'selected' : ''}" data-val="unknown">${renderAvatar('', 20)} Неизвестные</div>`;
+            const hasAll = hist.some(h => h.channel && h.channel.name === 'all');
+            if (hasAll) optionsHtml += `<div class="tm-ac-hist-filter-item ${currentFilter === 'all-pastes' ? 'selected' : ''}" data-val="all-pastes">${renderAvatar('', 20)} Везде</div>`;
+
+            Array.from(uniqueChannels.values()).sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name)).forEach(ch => {
+                if (ch.name === 'all') return;
+                optionsHtml += `<div class="tm-ac-hist-filter-item ${currentFilter === ch.name ? 'selected' : ''}" data-val="${escapeHtml(ch.name)}">${renderAvatar(ch.name, 20)} ${escapeHtml(ch.displayName || ch.name)}</div>`;
+            });
+
+            filterList.innerHTML = optionsHtml;
+
+            if (currentFilter === 'all') filterText.textContent = 'Все стримеры';
+            else if (currentFilter === 'unknown') filterText.textContent = 'Неизвестные';
+            else if (currentFilter === 'all-pastes') filterText.textContent = 'Везде';
+            else {
+                const ch = uniqueChannels.get(currentFilter);
+                filterText.textContent = ch ? (ch.displayName || ch.name) : 'Все стримеры';
+            }
+
+            filterList.querySelectorAll('.tm-ac-hist-filter-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    currentFilter = item.dataset.val;
+                    filterList.classList.remove('open');
+                    renderHistory();
+                });
+            });
+
+            let filteredHist = indexedHist;
+            if (currentFilter === 'unknown') filteredHist = indexedHist.filter(h => !h.channel || !h.channel.name || h.channel.name === 'unknown');
+            else if (currentFilter === 'all-pastes') filteredHist = indexedHist.filter(h => h.channel && h.channel.name === 'all');
+            else if (currentFilter !== 'all') filteredHist = indexedHist.filter(h => h.channel && h.channel.name === currentFilter);
+
+            if (filteredHist.length === 0) {
+                historyList.innerHTML = `<div class="tm-ac-hist-empty">Нет паст для этого выбора</div>`;
+                return;
+            }
+
+            historyList.innerHTML = filteredHist.map((h) => {
+                const originalIdx = h.originalIdx;
+                const ch = h.channel || { name: 'unknown', displayName: 'Unknown' };
+                const isUnknown = (!ch.name || ch.name === 'unknown');
+                const isAll = ch.name === 'all';
+                const displayName = isUnknown ? 'Unknown (нажмите чтобы изменить)' : (isAll ? 'Везде' : (ch.displayName || ch.name));
+                const isPinned = (h.pinnedIn || []).includes(currentFilter);
+                const mainText = h.variants[0] || '';
+
+                return `
+                    <div class="tm-ac-hist-item ${isPinned ? 'pinned' : ''}" data-idx="${originalIdx}" draggable="true">
+                        <div class="tm-ac-hist-channel">
+                            ${renderAvatar(ch.name, 16)}
+                            <span>${escapeHtml(displayName)}</span>
+                        </div>
+                        <div class="tm-ac-hist-text">${renderEmotes(mainText)}</div>
+                        <div class="tm-ac-hist-meta">
+                            <span>${h.chars || mainText.length} симв. ${h.variants.length > 1 ? `(${h.variants.length} вар.)` : ''}</span>
+                            <div class="tm-ac-hist-actions">
+                                <button class="tm-ac-hist-btn pin ${isPinned ? 'active' : ''}" title="${isPinned ? 'Открепить' : 'Закрепить'}">${isPinned ? '📌' : '📍'}</button>
+                                <button class="tm-ac-hist-btn send" title="Удерживайте 1 сек для отправки">📤</button>
+                                <button class="tm-ac-hist-btn preview" title="Предпросмотр">👁</button>
+                                <button class="tm-ac-hist-btn edit" title="Редактировать">✏️</button>
+                                <button class="tm-ac-hist-btn use">Выбрать</button>
+                                <button class="tm-ac-hist-btn delete" title="Удерживайте 1 сек для удаления">🗑</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Drag & Drop logic
+            let draggedItem = null;
+            let draggedIdx = -1;
+
+            historyList.querySelectorAll('.tm-ac-hist-item').forEach(item => {
+                item.addEventListener('dragstart', (e) => {
+                    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+                        e.preventDefault();
+                        return;
+                    }
+                    draggedItem = item;
+                    draggedIdx = parseInt(item.dataset.idx);
+                    item.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+
+                item.addEventListener('dragend', () => {
+                    if (draggedItem) draggedItem.classList.remove('dragging');
+                    historyList.querySelectorAll('.tm-ac-hist-item').forEach(i => i.classList.remove('drag-over'));
+                    draggedItem = null;
+                });
+
+                item.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    if (!draggedItem || draggedItem === item) return;
+                    item.classList.add('drag-over');
+                });
+
+                item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+
+                item.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    item.classList.remove('drag-over');
+                    if (draggedItem && draggedItem !== item) {
+                        const targetIdx = parseInt(item.dataset.idx);
+                        const hist = getHistory();
+                        const [moved] = hist.splice(draggedIdx, 1);
+                        hist.splice(targetIdx, 0, moved);
+                        const d = loadData();
+                        d.history = hist;
+                        saveData(d);
+
+                        if (activeHistoryIdx === draggedIdx) activeHistoryIdx = targetIdx;
+                        else if (activeHistoryIdx > draggedIdx && activeHistoryIdx <= targetIdx) activeHistoryIdx--;
+                        else if (activeHistoryIdx < draggedIdx && activeHistoryIdx >= targetIdx) activeHistoryIdx++;
+
+                        renderHistory();
+                    }
+                });
+            });
+
+            historyList.querySelectorAll('.tm-ac-hist-item').forEach(item => {
+                const idx = +item.dataset.idx;
+                const entry = getHistory()[idx];
+                const previewBtn = item.querySelector('.preview');
+
+                const channelEl = item.querySelector('.tm-ac-hist-channel');
+                if (channelEl) {
+                    channelEl.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const oldHtml = channelEl.innerHTML;
+                        channelEl.innerHTML = `
+                            <input type="text" class="tm-ac-hist-channel-input" placeholder="Введите ник..." autofocus>
+                            <div class="tm-ac-autocomplete-list" style="display:none;"></div>
+                        `;
+                        const input = channelEl.querySelector('input');
+                        const list = channelEl.querySelector('.tm-ac-autocomplete-list');
+                        let saved = false;
+
+                        const save = (forcedValue) => {
+                            if (saved) return;
+                            saved = true;
+                            let val = (forcedValue || input.value).trim().toLowerCase();
+                            if (val) {
+                                const histNow = getHistory();
+                                if (val === 'all' || val === 'везде') histNow[idx].channel = { name: 'all', displayName: 'Везде', avatar: '' };
+                                else histNow[idx].channel = { name: val, displayName: val, avatar: getAvatarUrl(val) };
+                                const d = loadData();
+                                d.history = histNow;
+                                saveData(d);
+                                renderHistory();
+                            } else {
+                                channelEl.innerHTML = oldHtml;
+                            }
+                        };
+
+                        input.addEventListener('input', () => {
+                            const q = input.value.trim().toLowerCase();
+                            let html = `<div class="tm-ac-autocomplete-item" data-name="all">${renderAvatar('', 16)} <span>Везде</span></div>`;
+                            if (q) {
+                                const matches = Array.from(uniqueChannels.values()).filter(c => c.name.includes(q) || (c.displayName && c.displayName.toLowerCase().includes(q)));
+                                if (matches.length > 0) {
+                                    html += matches.map(c => `
+                                        <div class="tm-ac-autocomplete-item" data-name="${escapeHtml(c.name)}">
+                                            ${renderAvatar(c.name, 16)}
+                                            <span>${escapeHtml(c.displayName || c.name)}</span>
+                                        </div>
+                                    `).join('');
+                                }
+                            }
+                            list.innerHTML = html;
+                            list.style.display = 'block';
+                            list.querySelectorAll('.tm-ac-autocomplete-item').forEach(mitem => {
+                                mitem.addEventListener('mousedown', (ev) => {
+                                    ev.preventDefault();
+                                    input.value = mitem.dataset.name;
+                                    save(mitem.dataset.name);
+                                });
+                            });
+                        });
+
+                        input.addEventListener('keydown', (ev) => {
+                            if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+                            if (ev.key === 'Escape') { saved = true; channelEl.innerHTML = oldHtml; }
+                        });
+                        input.addEventListener('blur', () => save());
+                        input.focus();
+                        input.dispatchEvent(new Event('input'));
+                    });
+                }
+
+                item.querySelector('.use').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    activeHistoryIdx = idx;
+                    msgEl.value = (entry?.variants[0] || '').slice(0, MAX_CHARS);
+                    updateCharCount();
+                    saveBasic();
+                    tabs.forEach(t => t.classList.remove('active'));
+                    contents.forEach(c => c.classList.remove('active'));
+                    panel.querySelector('[data-tab="send"]').classList.add('active');
+                    document.getElementById('tm-tab-send').classList.add('active');
+                    currentTab = 'send';
+                    updateLivePreview(msgEl.value, username);
+                    removeHistoryPreview();
+                });
+
+                item.querySelector('.pin').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    togglePin(idx);
+                });
+
+                item.querySelector('.edit').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openEditModal(idx);
+                });
+
+                const sendBtn = item.querySelector('.send');
+                let holdTimer = null, holdFrame = null, holdStart = 0, suppressClick = false;
+
+                const resetHold = () => {
+                    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+                    if (holdFrame) { cancelAnimationFrame(holdFrame); holdFrame = null; }
+                    sendBtn.style.background = '';
+                };
+
+                const doSendOnce = async () => {
+                    resetHold();
+                    if (sendBtn.disabled) return;
+                    sendBtn.disabled = true;
+                    suppressClick = true;
+                    try {
+                        const restriction = getChatRestriction();
+                        if (restriction) {
+                            setStatus(`⛔ ${restriction.message.replace(/\n/g, '<br>')}`, 'blocked');
+                            setTimeout(() => { if (!isRunning) setStatus('Стоп'); }, 3000);
+                            return;
+                        }
+                        const randVariant = entry?.variants[Math.floor(Math.random() * entry.variants.length)] || '';
+                        if (!randVariant.trim()) return;
+                        const result = await sendChatMessage(randVariant);
+                        if (result.ok) {
+                            if (!isRunning) {
+                                setStatus('✓ Отправлено', 'running');
+                                setTimeout(() => { if (!isRunning) setStatus('Стоп'); }, 2000);
+                            }
+                        } else if (result.restriction) {
+                            setStatus(`⛔ ${result.restriction.message.replace(/\n/g, '<br>')}`, 'blocked');
+                            setTimeout(() => { if (!isRunning) setStatus('Стоп'); }, 3000);
+                        }
+                    } finally {
+                        sendBtn.disabled = false;
+                        setTimeout(() => { suppressClick = false; }, 50);
+                    }
+                };
+
+                sendBtn.addEventListener('pointerdown', (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    if (sendBtn.disabled) return;
+                    holdStart = Date.now();
+                    const update = () => {
+                        const p = Math.min(1, (Date.now() - holdStart) / HOLD_SEND_MS);
+                        sendBtn.style.background = `linear-gradient(90deg, #00a865 ${p * 100}%, #2f2f35 ${p * 100}%)`;
+                        if (p < 1) holdFrame = requestAnimationFrame(update);
+                    };
+                    holdFrame = requestAnimationFrame(update);
+                    holdTimer = setTimeout(doSendOnce, HOLD_SEND_MS);
+                });
+
+                sendBtn.addEventListener('pointerup', resetHold);
+                sendBtn.addEventListener('pointercancel', resetHold);
+                sendBtn.addEventListener('pointerleave', resetHold);
+                sendBtn.addEventListener('click', (e) => { e.stopPropagation(); if (suppressClick) e.preventDefault(); });
+
+                const deleteBtn = item.querySelector('.delete');
+                let delHoldTimer = null, delHoldFrame = null, delHoldStart = 0, delSuppressClick = false;
+
+                const resetDelHold = () => {
+                    if (delHoldTimer) { clearTimeout(delHoldTimer); delHoldTimer = null; }
+                    if (delHoldFrame) { cancelAnimationFrame(delHoldFrame); delHoldFrame = null; }
+                    deleteBtn.style.background = '';
+                };
+
+                const doDelete = () => {
+                    resetDelHold();
+                    delSuppressClick = true;
+                    deleteHistoryItem(idx);
+                    setTimeout(() => { delSuppressClick = false; }, 50);
+                };
+
+                deleteBtn.addEventListener('pointerdown', (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    delHoldStart = Date.now();
+                    const update = () => {
+                        const p = Math.min(1, (Date.now() - delHoldStart) / HOLD_SEND_MS);
+                        deleteBtn.style.background = `linear-gradient(90deg, #e91916 ${p * 100}%, #2f2f35 ${p * 100}%)`;
+                        if (p < 1) delHoldFrame = requestAnimationFrame(update);
+                    };
+                    delHoldFrame = requestAnimationFrame(update);
+                    delHoldTimer = setTimeout(doDelete, HOLD_SEND_MS);
+                });
+
+                deleteBtn.addEventListener('pointerup', resetDelHold);
+                deleteBtn.addEventListener('pointercancel', resetDelHold);
+                deleteBtn.addEventListener('pointerleave', resetDelHold);
+                deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); if (delSuppressClick) e.preventDefault(); });
+
+                previewBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const randVariant = entry?.variants[Math.floor(Math.random() * entry.variants.length)] || '';
+                    const opened = showHistoryPreview(randVariant, username);
+                    document.querySelectorAll('.tm-ac-hist-btn.preview').forEach(b => b.classList.remove('active'));
+                    if (opened) previewBtn.classList.add('active');
+                });
+
+                item.addEventListener('click', () => {
+                    activeHistoryIdx = idx;
+                    msgEl.value = (entry?.variants[0] || '').slice(0, MAX_CHARS);
+                    updateCharCount();
+                    saveBasic();
+                });
+            });
+        }
+
+        renderHistory();
+
+        document.addEventListener('tm-emotes-updated', () => {
+            if (currentTab === 'history') renderHistory();
+        });
+
+        setInterval(() => {
+            const currentCh = getChannelInfo().name;
+            if (currentCh !== lastKnownChannel) {
+                lastKnownChannel = currentCh;
+                channelEmoteNames.forEach(name => emoteMap.delete(name));
+                channelEmoteNames.clear();
+                if (currentCh) fetchSevenTVEmotes(currentCh);
+
+                const hist = getHistory();
+                if (currentCh && hist.some(h => h.channel && h.channel.name === currentCh)) currentFilter = currentCh;
+                else currentFilter = 'all';
+                if (currentTab === 'history') renderHistory();
+                if (currentTab === 'send') updateLivePreview(msgEl.value, username);
+            }
+        }, 1500);
+
+        let timeoutId = null;
+        let countdownInterval = null;
+        let nextSendAt = 0;
+        let lastRestrictionType = null;
+
+        function setStatus(text, type = '') {
+            statusEl.classList.remove('running', 'blocked', 'paused');
+            if (type) statusEl.classList.add(type);
+            const textEl = statusEl.querySelector('.tm-ac-status-text');
+            if (textEl) {
+                if (type === 'running') {
+                    if (text.includes('отправка через') || text.includes('Работает')) {
+                        const secMatch = text.match(/<b>(.*?)<\/b>/);
+                        textEl.textContent = secMatch ? secMatch[1] : 'Работает';
+                        statusEl.title = text.replace(/<[^>]*>/g, '');
+                    } else {
+                        textEl.textContent = text.replace(/<[^>]*>/g, '');
+                        statusEl.title = text.replace(/<[^>]*>/g, '');
+                    }
+                } else if (type === 'blocked') {
+                    textEl.textContent = 'Бан';
+                    statusEl.title = text.replace(/\n/g, ' ').replace(/<[^>]*>/g, '');
+                } else if (type === 'paused') {
+                    textEl.textContent = 'Пауза';
+                    statusEl.title = 'Ожидание отправки ручного сообщения';
+                } else {
+                    textEl.textContent = 'Стоп';
+                    statusEl.title = 'Остановлено';
+                }
+            }
+        }
+
+        function startCountdownDisplay() {
+            stopCountdownDisplay();
+            countdownInterval = setInterval(() => {
+                if (!isRunning || isPausedByUser) return;
+                const left = Math.max(0, nextSendAt - Date.now());
+                const sec = (left / 1000).toFixed(1);
+                setStatus(`Работает • отправка через <b>${sec}с</b>`, 'running');
+            }, 100);
+        }
+
+        function stopCountdownDisplay() {
+            if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+        }
+
+        function updateChatStatusUI() {
+            const slowMode = getSlowModeInfo();
+            if (slowMode > 0) {
+                slowmodeText.textContent = slowMode;
+                slowmodePill.style.display = 'flex';
+            } else slowmodePill.style.display = 'none';
+
+            const restriction = getChatRestriction();
+            if (restriction) {
+                if (lastRestrictionType !== restriction.type) {
+                    playBeep();
+                    if (isRunning) {
+                        isRunning = false;
+                        clearTimeout(timeoutId);
+                        stopCountdownDisplay();
+                        startBtn.style.display = '';
+                        stopBtn.style.display = 'none';
+                    }
+                }
+                lastRestrictionType = restriction.type;
+                setStatus(`⛔ ${restriction.message.replace(/\n/g, '<br>')}`, 'blocked');
+                startBtn.disabled = true;
+            } else {
+                if (lastRestrictionType) {
+                    lastRestrictionType = null;
+                    startBtn.disabled = false;
+                    if (!isRunning) setStatus('Стоп');
+                } else startBtn.disabled = false;
+            }
+        }
+        setInterval(updateChatStatusUI, 1500);
+        updateChatStatusUI();
+
+        function scheduleNext(baseSec) {
+            if (!isRunning || isPausedByUser) return;
+            const restriction = getChatRestriction();
+            if (restriction) {
+                setStatus(`⛔ ${restriction.message.replace(/\n/g, '<br>')}`, 'blocked');
+                timeoutId = setTimeout(() => scheduleNext(baseSec), 5000);
+                return;
+            }
+
+            const delay = getRandomDelay(baseSec);
+            nextSendAt = Date.now() + delay;
+            startCountdownDisplay();
+
+            timeoutId = setTimeout(async () => {
+                if (!isRunning || isPausedByUser) return;
+                stopCountdownDisplay();
+                setStatus('Отправка...', 'running');
+
+                isAutoSending = true;
+
+                let textToSend = msgEl.value.trim();
+                if (activeHistoryIdx > -1) {
+                    const entry = getHistory()[activeHistoryIdx];
+                    if (entry && entry.variants && entry.variants.length > 0) {
+                        textToSend = entry.variants[Math.floor(Math.random() * entry.variants.length)];
+                    }
+                }
+
+                const result = await sendChatMessage(textToSend);
+                setTimeout(() => { isAutoSending = false; }, 1000);
+
+                if (!result.ok && result.restriction) {
+                    setStatus(`⛔ ${result.restriction.message.replace(/\n/g, '<br>')}`, 'blocked');
+                    timeoutId = setTimeout(() => scheduleNext(baseSec), 5000);
+                } else scheduleNext(baseSec);
+            }, delay);
+        }
+
+        startBtn.addEventListener('click', () => {
+            const text = msgEl.value.trim();
+            const sec = Math.max(2, parseInt(intervalEl.value, 10) || 5);
+            if (!text) { setStatus('Нет текста', 'blocked'); setTimeout(() => { if(!isRunning) setStatus('Стоп'); }, 2000); return; }
+            if (getChatRestriction()) { setStatus(`⛔ ${getChatRestriction().message.replace(/\n/g, '<br>')}`, 'blocked'); return; }
+            if (isRunning) return;
+
+            isRunning = true;
+            isPausedByUser = false;
+            startBtn.style.display = 'none';
+            stopBtn.style.display = '';
+            setStatus('Ожидание...', 'running');
+
+            removeLivePreview();
+
+            // Если выбрана паста из истории - не перезаписываем её!
+            if (activeHistoryIdx === -1) {
+                addToHistory([text]);
+            }
+
+            saveBasic();
+            scheduleNext(sec);
+        });
+
+        stopBtn.addEventListener('click', () => {
+            isRunning = false;
+            isPausedByUser = false;
+            clearTimeout(timeoutId);
+            timeoutId = null;
+            stopCountdownDisplay();
+            startBtn.style.display = '';
+            stopBtn.style.display = 'none';
+            updateChatStatusUI();
+            if (!getChatRestriction()) setStatus('Стоп');
+            if (currentTab === 'send') updateLivePreview(msgEl.value, username);
+        });
+
+        function attachChatListeners() {
+            const chatInput = findChatInput();
+            if (!chatInput || chatInput.dataset.tmListenersAttached) return;
+            chatInput.dataset.tmListenersAttached = 'true';
+
+            const checkInputState = () => {
+                if (isAutoSending) return;
+                const currentText = (chatInput.innerText || '').trim();
+
+                if (currentText.length > 0) {
+                    if (isRunning && !isPausedByUser) {
+                        isPausedByUser = true;
+                        clearTimeout(timeoutId);
+                        stopCountdownDisplay();
+                        setStatus('Пауза (ручной ввод)', 'paused');
+                    }
+                } else if (currentText.length === 0) {
+                    if (isPausedByUser) {
+                        isPausedByUser = false;
+                        if (isRunning) {
+                            setTimeout(() => {
+                                if (isRunning && !isPausedByUser) {
+                                    const sec = Math.max(2, parseInt(intervalEl.value, 10) || 5);
+                                    scheduleNext(sec);
+                                }
+                            }, 1000);
+                        } else setStatus('Стоп');
+                    }
+                }
+            };
+
+            chatInput.addEventListener('input', checkInputState);
+            chatInput.addEventListener('keydown', (e) => {
+                if (isAutoSending) return;
+                if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') setTimeout(checkInputState, 10);
+                else if (e.key === 'Enter' && !e.shiftKey) setTimeout(checkInputState, 200);
+            });
+
+            const sendBtnChat = findSendButton();
+            if (sendBtnChat && !sendBtnChat.dataset.tmListenersAttached) {
+                sendBtnChat.dataset.tmListenersAttached = 'true';
+                sendBtnChat.addEventListener('click', () => { if (!isAutoSending) setTimeout(checkInputState, 200); });
+            }
+        }
+
+        setInterval(attachChatListeners, 1000);
+        attachChatListeners();
+    }
+
+    let initStarted = false;
+    function initScript() {
+        if (initStarted) return;
+        initStarted = true;
+        injectStyle();
+        applySpoilerSettings();
+        setupSpoilers();
+        createAutoChatUI();
+        requestAnimationFrame(tick);
+
+        let isUpdating = false;
+        new MutationObserver(() => {
+            if (isUpdating) return;
+            isUpdating = true;
+            requestAnimationFrame(() => {
+                injectStyle();
+                applySpoilerSettings();
+                setupSpoilers();
+                isUpdating = false;
+            });
+        }).observe(document.body, { childList: true, subtree: true });
+    }
+
+    function waitForStablePage() {
+        return new Promise((resolve) => {
+            let idleTimeout = null;
+            let lastMutation = Date.now();
+            const observer = new MutationObserver(() => { lastMutation = Date.now(); });
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            const checkStable = () => {
+                const silentTime = Date.now() - lastMutation;
+                const chatReady = !!document.querySelector('div[data-a-target="chat-input"]') || !!document.querySelector('section[data-test-selector="chat-room-component-layout"]');
+
+                if (silentTime > 1500 && chatReady) {
+                    observer.disconnect();
+                    if (idleTimeout) clearTimeout(idleTimeout);
+                    resolve();
+                    return;
+                }
+                if (silentTime > 8000) {
+                    observer.disconnect();
+                    if (idleTimeout) clearTimeout(idleTimeout);
+                    resolve();
+                    return;
+                }
+                setTimeout(checkStable, 300);
+            };
+
+            idleTimeout = setTimeout(() => { observer.disconnect(); resolve(); }, 15000);
+            setTimeout(checkStable, 500);
+        });
+    }
+
+    function boot() {
+        waitForStablePage().then(() => {
+            if ('requestIdleCallback' in window) requestIdleCallback(() => initScript(), { timeout: 3000 });
+            else setTimeout(initScript, 500);
+        });
+    }
+
+    if (document.readyState === 'complete') boot();
+    else window.addEventListener('load', boot, { once: true });
+})();
