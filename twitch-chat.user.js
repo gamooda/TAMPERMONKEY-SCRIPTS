@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      11.4
+// @version      11.5
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -189,6 +189,101 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
 #tm-emote-picker-modal .tm-ep-list::-webkit-scrollbar-thumb { background: #3a3a3d; border-radius: 3px; }
 #tm-emote-picker-modal img { width: 48px; height: 48px; object-fit: contain; cursor: pointer; border-radius: 6px; padding: 4px; transition: background 0.15s; }
 #tm-emote-picker-modal img:hover { background: #2f2f35; }
+#tm-autochat-panel .tm-ac-header { padding: 12px 14px; background: linear-gradient(115deg, #17171b 0%, #101013 100%); border-bottom-color: #303038; }
+#tm-autochat-panel .tm-ac-header-title { font-size: 14px; font-weight: 700; letter-spacing: .15px; }
+#tm-autochat-panel .tm-ac-header-right { gap: 8px; }
+#tm-autochat-panel .tm-ac-tabs { padding: 0 10px; background: #101013; }
+#tm-autochat-panel .tm-ac-tab { padding: 12px 0 10px; font-weight: 600; }
+#tm-autochat-panel .tm-ac-body { padding: 15px 14px 18px; }
+#tm-tab-send { display: flex; flex-direction: column; gap: 13px; }
+#tm-tab-send #tm-ac-msg { height: 164px; min-height: 164px; padding: 13px; background: #101013; border-color: #34343c; border-radius: 10px; font-size: 13px; line-height: 1.55; }
+#tm-tab-send #tm-ac-msg:focus { border-color: #9147ff; box-shadow: 0 0 0 2px rgba(145,71,255,.13); }
+.tm-ac-composer-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: -7px; }
+.tm-ac-composer-tools #tm-ac-char-count { margin: 0; font-variant-numeric: tabular-nums; }
+.tm-ac-interval-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; background: #101013; border: 1px solid #303038; border-radius: 10px; }
+.tm-ac-interval-label { display: flex; flex-direction: column; gap: 3px; }
+.tm-ac-interval-label strong { color: #efeff1; font-size: 13px; font-weight: 600; }
+.tm-ac-interval-label small { color: #777782; font-size: 11px; }
+.tm-ac-interval-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#tm-autochat-panel #tm-ac-interval { width: 76px; height: 36px; padding: 7px 9px; border-radius: 7px; background: #09090b; border-color: #3a3a43; font-variant-numeric: tabular-nums; }
+.tm-ac-interval-unit { color: #92929d; font-size: 12px; }
+.tm-ac-random-tag { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 9px; border: 1px solid rgba(145,71,255,.35); border-radius: 7px; background: rgba(145,71,255,.1); color: #d0b5ff; font-size: 11px; font-weight: 600; cursor: help; }
+.tm-ac-random-tag::before { content: '↝'; font-size: 14px; line-height: 1; }
+.tm-ac-random-tag[data-tooltip]::after { content: attr(data-tooltip); position: absolute; z-index: 30; left: 0; top: calc(100% + 8px); width: 230px; padding: 8px 10px; border: 1px solid #45454f; border-radius: 7px; background: #242428; color: #efeff1; font-size: 11px; font-weight: 400; line-height: 1.45; white-space: normal; opacity: 0; visibility: hidden; transform: translateY(-3px); transition: opacity .15s, transform .15s, visibility .15s; box-shadow: 0 6px 20px rgba(0,0,0,.45); pointer-events: none; }
+.tm-ac-random-tag:hover::after, .tm-ac-random-tag:focus-visible::after { opacity: 1; visibility: visible; transform: translateY(0); }
+.tm-ac-run-status { display: flex; align-items: center; gap: 11px; min-height: 72px; padding: 12px 13px; border: 1px solid #303038; border-radius: 10px; background: linear-gradient(120deg, #141418, #101013); transition: border-color .2s, background .2s; }
+.tm-ac-run-status.running { border-color: rgba(0,245,147,.38); background: linear-gradient(120deg, rgba(0,245,147,.08), #101013 72%); }
+.tm-ac-run-status.blocked { border-color: rgba(255,89,89,.4); background: linear-gradient(120deg, rgba(255,89,89,.08), #101013 72%); }
+.tm-ac-run-status.paused { border-color: rgba(255,184,0,.4); background: linear-gradient(120deg, rgba(255,184,0,.07), #101013 72%); }
+.tm-ac-run-indicator { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; background: #6b6b70; box-shadow: 0 0 0 4px rgba(107,107,112,.12); }
+.tm-ac-run-status.running .tm-ac-run-indicator { background: #00f593; box-shadow: 0 0 0 4px rgba(0,245,147,.12); }
+.tm-ac-run-status.blocked .tm-ac-run-indicator { background: #ff6262; box-shadow: 0 0 0 4px rgba(255,98,98,.12); }
+.tm-ac-run-status.paused .tm-ac-run-indicator { background: #ffb800; box-shadow: 0 0 0 4px rgba(255,184,0,.12); }
+.tm-ac-run-status-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.tm-ac-run-state { color: #efeff1; font-size: 13px; font-weight: 700; }
+.tm-ac-run-detail { color: #858590; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.tm-ac-run-value { flex: 0 0 auto; color: #b9b9c2; font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.5px; }
+.tm-ac-run-status.running .tm-ac-run-value { color: #00f593; }
+.tm-ac-run-actions { display: flex; gap: 8px; }
+.tm-ac-run-btn { display: flex; flex: 1; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 9px 14px; border: 1px solid transparent; border-radius: 8px; color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; transition: filter .15s, transform .15s, opacity .15s; }
+.tm-ac-run-btn:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
+.tm-ac-run-btn:disabled { opacity: .45; cursor: not-allowed; }
+#tm-ac-start.tm-ac-run-btn { background: #087f54; border-color: #15996a; }
+#tm-ac-stop.tm-ac-run-btn { background: #8e2929; border-color: #a63a3a; }
+.tm-ac-run-note { margin-top: -5px; color: #777782; font-size: 11px; line-height: 1.45; text-align: center; }
+.tm-ac-hist-item { gap: 8px; padding: 11px; border-color: #303038; background: #101013; }
+.tm-ac-hist-item:hover { border-color: #7950b5; background: #17171c; }
+.tm-ac-hist-topline { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.tm-ac-hist-channel { min-width: 0; margin: 0; color: #b4b4bf; }
+.tm-ac-hist-channel span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tm-ac-variant-badge { display: inline-flex; flex: 0 0 auto; align-items: center; padding: 3px 7px; border: 1px solid rgba(145,71,255,.35); border-radius: 6px; background: rgba(145,71,255,.12); color: #d0b5ff; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.tm-ac-hist-text { max-height: 58px; color: #d0d0d8; font-size: 12px; }
+.tm-ac-hist-meta { align-items: center; gap: 8px; margin-top: 2px; }
+.tm-ac-hist-actions { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: 7px; flex-wrap: nowrap; }
+.tm-ac-hist-action-main, .tm-ac-hist-action-tools { display: flex; align-items: center; gap: 4px; }
+.tm-ac-hist-action-tools { padding-left: 7px; border-left: 1px solid #35353d; }
+.tm-ac-hist-btn { min-width: 29px; min-height: 29px; padding: 5px 8px; border: 1px solid #383840; background: #25252b; border-radius: 7px; }
+.tm-ac-hist-action-tools .tm-ac-hist-btn { padding: 5px 7px; }
+.tm-ac-hist-btn.use { padding: 5px 10px; background: rgba(145,71,255,.15); border-color: rgba(145,71,255,.25); color: #d5bdff; }
+.tm-ac-hist-btn.use:hover { background: #6535a8; color: #fff; }
+.tm-ac-hist-btn[data-tooltip] { position: relative; }
+.tm-ac-hist-btn[data-tooltip]::after { content: attr(data-tooltip); position: absolute; z-index: 50; left: 50%; bottom: calc(100% + 8px); max-width: 220px; width: max-content; padding: 7px 9px; border: 1px solid #45454f; border-radius: 7px; background: #242428; color: #efeff1; font-size: 11px; font-weight: 500; line-height: 1.35; white-space: normal; text-align: center; opacity: 0; visibility: hidden; transform: translate(-50%, 3px); transition: opacity .14s, transform .14s, visibility .14s; pointer-events: none; box-shadow: 0 5px 16px rgba(0,0,0,.45); }
+.tm-ac-hist-action-tools .tm-ac-hist-btn[data-tooltip]::after { left: auto; right: 0; transform: translateY(3px); }
+.tm-ac-hist-btn[data-tooltip]:hover::after, .tm-ac-hist-btn[data-tooltip]:focus-visible::after { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+.tm-ac-hist-action-tools .tm-ac-hist-btn[data-tooltip]:hover::after, .tm-ac-hist-action-tools .tm-ac-hist-btn[data-tooltip]:focus-visible::after { transform: translateY(0); }
+.tm-ac-hist-btn.delete:hover { background: #a83232; }
+.tm-ac-section-title { margin: 17px 0 9px !important; padding-bottom: 7px; border-bottom: 1px solid #303038; color: #c5a6ff !important; letter-spacing: .2px; }
+#tm-autochat-panel .tm-ac-check { align-items: flex-start; gap: 10px; margin: 8px 0; padding: 10px 11px; border: 1px solid #2d2d35; border-radius: 8px; background: #111114; }
+#tm-autochat-panel .tm-ac-check input { flex: 0 0 16px; margin: 2px 0 0; }
+.tm-ac-check-copy { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; color: #e1e1e7; font-size: 12px; font-weight: 600; line-height: 1.35; }
+.tm-ac-check-copy small { color: #858590; font-size: 11px; font-weight: 400; line-height: 1.45; }
+#tm-ac-spoiler-never-row.locked { opacity: .45; }
+#tm-edit-modal .tm-edit-content { width: 720px; max-width: 92vw; max-height: 86vh; height: auto; min-height: 430px; border-color: #3a3a43; }
+#tm-edit-modal .tm-edit-header { padding: 15px 18px; }
+#tm-edit-modal .tm-edit-header h3 { color: #e0ccff; font-size: 15px; }
+.tm-edit-heading { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tm-edit-subtitle { color: #858590; font-size: 11px; line-height: 1.4; }
+#tm-edit-modal .tm-edit-body { padding: 15px 18px; gap: 11px; }
+#tm-edit-modal .tm-variant-row { display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid #34343c; border-radius: 9px; background: #111114; }
+.tm-variant-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tm-variant-title { color: #d9c4ff; font-size: 12px; font-weight: 700; }
+.tm-variant-count { color: #777782; font-size: 10px; font-variant-numeric: tabular-nums; }
+.tm-variant-count.over { color: #ff6262; }
+.tm-variant-content { display: flex; align-items: stretch; gap: 9px; }
+#tm-edit-modal .tm-edit-textarea { min-height: 108px; height: 108px; padding: 11px; border-color: #363640; border-radius: 8px; background: #0b0b0e; font-size: 13px; }
+#tm-edit-modal .tm-edit-textarea:focus { border-color: #9147ff; box-shadow: 0 0 0 2px rgba(145,71,255,.12); }
+.tm-variant-tools { display: flex; flex: 0 0 112px; flex-direction: column; gap: 7px; }
+.tm-variant-tools .tm-edit-btn { min-height: 36px; padding: 7px 8px !important; border: 1px solid #3a3a43; border-radius: 7px; font-size: 11px !important; white-space: nowrap; }
+.tm-variant-tools .add-emote-btn { background: #282431; color: #d8c6ff; }
+.tm-variant-tools .add-emote-btn:hover { background: #3a2d50; }
+.tm-variant-tools .remove-btn { background: #282124; color: #ffaaaa; }
+.tm-variant-tools .remove-btn:hover:not(:disabled) { background: #6d2929; color: #fff; }
+.tm-variant-tools .remove-btn:disabled { opacity: .35; cursor: not-allowed; }
+#tm-edit-modal .tm-edit-actions { padding: 12px 18px; }
+#tm-edit-modal .tm-edit-btn.save { background: #087f54; }
+#tm-edit-modal .tm-edit-btn.add { background: #29252f; color: #d9c4ff; border: 1px solid #4a3b60; }
+#tm-edit-modal .tm-edit-btn.cancel { border: 1px solid #373740; }
+@media (max-width: 560px) { #tm-edit-modal .tm-edit-content { width: 94vw; min-height: 0; } #tm-edit-modal .tm-edit-body { padding: 12px; } .tm-variant-content { flex-direction: column; } .tm-variant-tools { flex: 0 0 auto; flex-direction: row; width: 100%; } .tm-variant-tools .tm-edit-btn { flex: 1; } .tm-ac-hist-action-tools { gap: 2px; padding-left: 5px; } .tm-ac-hist-action-tools .tm-ac-hist-btn { padding: 5px; } }
         `;
         document.head.appendChild(style);
     }
@@ -652,8 +747,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                         <span class="tm-ac-status-dot"></span>
                         <span class="tm-ac-status-text">Стоп</span>
                     </div>
-                    <button class="tm-ac-header-btn start" id="tm-ac-start" title="Старт">▶</button>
-                    <button class="tm-ac-header-btn stop" id="tm-ac-stop" style="display:none" title="Стоп">■</button>
                     <button id="tm-autochat-toggle" title="Закрыть">×</button>
                 </div>
             </div>
@@ -667,16 +760,34 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
             <div class="tm-ac-body">
                 <div class="tm-ac-tab-content active" id="tm-tab-send">
                     <textarea id="tm-ac-msg" placeholder="Введите сообщение или пасту..." maxlength="${MAX_CHARS}"></textarea>
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <button id="tm-ac-emotes-btn" class="tm-ac-hist-btn" style="font-size:12px; padding:4px 8px;">😀 Смайлы</button>
+                    <div class="tm-ac-composer-tools">
+                        <button id="tm-ac-emotes-btn" class="tm-ac-hist-btn">😀 Смайлы</button>
                         <div id="tm-ac-char-count">0 / ${MAX_CHARS}</div>
                     </div>
-
-                    <div class="tm-ac-row" style="margin-top:10px;">
-                        <label>Интервал ~сек</label>
-                        <input type="number" id="tm-ac-interval" value="5" min="2" max="3600">
-                        <span class="tm-ac-hint">± рандом</span>
+                    <div class="tm-ac-interval-card">
+                        <div class="tm-ac-interval-label">
+                            <strong>Интервал между сообщениями</strong>
+                            <small>Задайте примерное время между отправками</small>
+                        </div>
+                        <div class="tm-ac-interval-control">
+                            <input type="number" id="tm-ac-interval" value="5" min="2" max="3600" aria-label="Интервал отправки в секундах">
+                            <span class="tm-ac-interval-unit">секунд</span>
+                            <span class="tm-ac-random-tag" tabindex="0" data-tooltip="Фактическая пауза каждый раз немного меняется вокруг указанного значения. Это автоматическая часть текущего режима, а не переключатель.">Случайный интервал</span>
+                        </div>
                     </div>
+                    <div class="tm-ac-run-status" id="tm-ac-run-status">
+                        <span class="tm-ac-run-indicator"></span>
+                        <div class="tm-ac-run-status-copy">
+                            <span class="tm-ac-run-state" id="tm-ac-run-state">Не запущено</span>
+                            <span class="tm-ac-run-detail" id="tm-ac-run-detail">Нажмите «Запустить», чтобы начать отправку</span>
+                        </div>
+                        <strong class="tm-ac-run-value" id="tm-ac-run-value">—</strong>
+                    </div>
+                    <div class="tm-ac-run-actions">
+                        <button class="tm-ac-run-btn" id="tm-ac-start" type="button"><span>▶</span> Запустить</button>
+                        <button class="tm-ac-run-btn" id="tm-ac-stop" type="button" style="display:none"><span>■</span> Остановить</button>
+                    </div>
+                    <div class="tm-ac-run-note">Автоотправка повторяется с заданным интервалом, пока вы не нажмёте «Остановить».</div>
                 </div>
 
                 <div class="tm-ac-tab-content" id="tm-tab-history">
@@ -694,21 +805,21 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                     <div class="tm-ac-section-title">Чат</div>
                     <label class="tm-ac-check">
                         <input type="checkbox" id="tm-ac-live-preview" ${settings.livePreview ? 'checked' : ''}>
-                        <span>Показывать Live превью</span>
+                        <span class="tm-ac-check-copy"><span>Live-превью</span><small>Показывает, как сообщение будет выглядеть в чате, пока вы его набираете.</small></span>
                     </label>
                     <label class="tm-ac-check">
                         <input type="checkbox" id="tm-ac-antispam" ${settings.antiSpamRandomizer ? 'checked' : ''}>
-                        <span>Невидимые символы (Анти-спам)</span>
+                        <span class="tm-ac-check-copy"><span>Невидимые символы (Анти-спам)</span><small>Добавляет незаметные разделители, чтобы одинаковые сообщения отличались для фильтров повторов.</small></span>
                     </label>
 
                     <div class="tm-ac-section-title">Описание (баннеры)</div>
                     <label class="tm-ac-check">
                         <input type="checkbox" id="tm-ac-spoiler-enabled" ${settings.spoilerEnabled ? 'checked' : ''}>
-                        <span>Включить блюр баннерам</span>
+                        <span class="tm-ac-check-copy"><span>Размывать баннеры</span><small>Скрывает изображения баннеров под размытием до наведения курсора.</small></span>
                     </label>
                     <label class="tm-ac-check" id="tm-ac-spoiler-never-row">
                         <input type="checkbox" id="tm-ac-spoiler-never" ${settings.spoilerNeverReveal ? 'checked' : ''}>
-                        <span>Никогда не показывать (даже при наведении)</span>
+                        <span class="tm-ac-check-copy"><span>Не показывать даже при наведении</span><small>Оставляет баннеры размытыми постоянно, пока включена защита.</small></span>
                     </label>
 
                     <div class="tm-ac-section-title">Экспорт / Импорт</div>
@@ -726,7 +837,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         editModal.innerHTML = `
             <div class="tm-edit-content">
                 <div class="tm-edit-header">
-                    <h3>Редактирование пасты</h3>
+                    <div class="tm-edit-heading"><h3>Редактирование пасты</h3><span class="tm-edit-subtitle">Добавьте несколько текстов — при отправке скрипт выберет один случайно.</span></div>
                     <button class="tm-edit-btn cancel" id="tm-edit-close-btn" style="padding:4px 8px;">✕</button>
                 </div>
                 <div class="tm-edit-body" id="tm-edit-variants-container"></div>
@@ -880,6 +991,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         });
         const msgEl = panel.querySelector('#tm-ac-msg'); const intervalEl = panel.querySelector('#tm-ac-interval'); const startBtn = panel.querySelector('#tm-ac-start'); const stopBtn = panel.querySelector('#tm-ac-stop');
         const statusEl = panel.querySelector('#tm-ac-status'); const historyList = panel.querySelector('#tm-ac-history-list'); const charCount = panel.querySelector('#tm-ac-char-count'); const livePreviewCheck = panel.querySelector('#tm-ac-live-preview');
+        const runStatusCard = panel.querySelector('#tm-ac-run-status'); const runStateEl = panel.querySelector('#tm-ac-run-state'); const runDetailEl = panel.querySelector('#tm-ac-run-detail'); const runValueEl = panel.querySelector('#tm-ac-run-value');
         const antispamCheck = panel.querySelector('#tm-ac-antispam'); const spoilerEnabledCheck = panel.querySelector('#tm-ac-spoiler-enabled'); const spoilerNeverCheck = panel.querySelector('#tm-ac-spoiler-never'); const spoilerNeverRow = panel.querySelector('#tm-ac-spoiler-never-row');
         const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
         const filterText = panel.querySelector('#tm-ac-history-filter-text'); const filterList = panel.querySelector('#tm-ac-history-filter-list'); const emoteSearch = emoteModal.querySelector('#tm-ep-search'); const emoteList = emoteModal.querySelector('#tm-ep-list');
@@ -904,8 +1016,9 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                     img.addEventListener('click', () => {
                         if (currentEmoteTarget) {
                             const start = currentEmoteTarget.selectionStart; const end = currentEmoteTarget.selectionEnd; const text = currentEmoteTarget.value;
-                            currentEmoteTarget.value = text.substring(0, start) + ' ' + name + ' ' + text.substring(end);
+                            currentEmoteTarget.value = text.substring(0, start) + " " + name + " " + text.substring(end);
                             currentEmoteTarget.selectionStart = currentEmoteTarget.selectionEnd = start + name.length + 2;
+                            currentEmoteTarget.dispatchEvent(new Event("input", { bubbles: true }));
                             currentEmoteTarget.focus();
                         }
                     });
@@ -1045,25 +1158,49 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         function openEditModal(idx) {
             const entry = getHistory()[idx]; const variantsContainer = editModal.querySelector('#tm-edit-variants-container');
             variantsContainer.innerHTML = '';
-            const addVariantInput = (val = '') => {
+            const updateVariantLabels = () => {
+                const rows = Array.from(variantsContainer.querySelectorAll('.tm-variant-row'));
+                rows.forEach((row, index) => {
+                    const ta = row.querySelector('textarea');
+                    const count = row.querySelector('.tm-variant-count');
+                    const removeBtn = row.querySelector('.remove-btn');
+                    row.querySelector(".tm-variant-title").textContent = `Вариант ${index + 1}`;
+                    count.textContent = `${ta.value.length} / ${MAX_CHARS}`;
+                    count.classList.toggle('over', ta.value.length >= MAX_CHARS);
+                    removeBtn.disabled = rows.length <= 1;
+                    removeBtn.title = rows.length <= 1 ? "Нельзя удалить единственный вариант" : "Удалить этот вариант";
+                });
+            };
+            const addVariantInput = (val = "") => {
                 const row = document.createElement('div');
                 row.className = 'tm-variant-row';
                 row.innerHTML = `
-                    <textarea class="tm-edit-textarea" maxlength="${MAX_CHARS}">${escapeHtml(val)}</textarea>
-                    <div style="display:flex; flex-direction:column; gap:4px;">
-                        <button class="tm-edit-btn add-emote-btn" style="padding:6px 10px; font-size:16px;" title="Добавить смайл">😀</button>
-                        <button class="tm-edit-btn cancel remove-btn" style="padding:6px 10px;">✕</button>
+                    <div class="tm-variant-top">
+                        <strong class="tm-variant-title">Вариант</strong>
+                        <span class="tm-variant-count">0 / ${MAX_CHARS}</span>
+                    </div>
+                    <div class="tm-variant-content">
+                        <textarea class="tm-edit-textarea" maxlength="${MAX_CHARS}">${escapeHtml(val)}</textarea>
+                        <div class="tm-variant-tools">
+                            <button class="tm-edit-btn add-emote-btn" type="button">😀 Смайл</button>
+                            <button class="tm-edit-btn cancel remove-btn" type="button">✕ Удалить</button>
+                        </div>
                     </div>
                 `;
                 row.querySelector('.remove-btn').addEventListener('click', () => {
-                    if (variantsContainer.children.length > 1) row.remove();
+                    if (variantsContainer.children.length > 1) {
+                        row.remove();
+                        updateVariantLabels();
+                    }
                 });
                 const ta = row.querySelector('textarea');
+                ta.addEventListener('input', updateVariantLabels);
                 row.querySelector('.add-emote-btn').addEventListener('click', (e) => {
                     e.stopPropagation();
                     openEmotePicker(ta);
                 });
                 variantsContainer.appendChild(row);
+                updateVariantLabels();
             };
             const currentVariants = entry.variants || [''];
             currentVariants.forEach(v => addVariantInput(v));
@@ -1145,24 +1282,33 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                 return;
             }
             historyList.innerHTML = filteredHist.map((h) => {
-                const originalIdx = h.originalIdx; const ch = h.channel || { name: 'unknown', displayName: 'Unknown' }; const isUnknown = (!ch.name || ch.name === 'unknown'); const isAll = ch.name === 'all';
-                const displayName = isUnknown ? 'Unknown (нажмите чтобы изменить)' : (isAll ? 'Везде' : (ch.displayName || ch.name)); const isPinned = (h.pinnedIn || []).includes(currentFilter); const mainText = h.variants[0] || '';
+                const originalIdx = h.originalIdx; const ch = h.channel || { name: "unknown", displayName: "Unknown" }; const isUnknown = (!ch.name || ch.name === "unknown"); const isAll = ch.name === "all";
+                const displayName = isUnknown ? "Unknown (нажмите чтобы изменить)" : (isAll ? "Везде" : (ch.displayName || ch.name)); const isPinned = (h.pinnedIn || []).includes(currentFilter); const mainText = h.variants[0] || "";
+                const variantCount = h.variants.length;
+                const variantLabel = variantCount % 10 === 1 && variantCount % 100 !== 11 ? "вариант" : variantCount % 10 >= 2 && variantCount % 10 <= 4 && (variantCount % 100 < 12 || variantCount % 100 > 14) ? "варианта" : "вариантов";
                 return `
-                    <div class="tm-ac-hist-item ${isPinned ? 'pinned' : ''}" data-idx="${originalIdx}" draggable="true">
-                        <div class="tm-ac-hist-channel">
-                            ${renderAvatar(ch.name, 16)}
-                            <span>${escapeHtml(displayName)}</span>
+                    <div class="tm-ac-hist-item ${isPinned ? "pinned" : ""}" data-idx="${originalIdx}" draggable="true">
+                        <div class="tm-ac-hist-topline">
+                            <div class="tm-ac-hist-channel">
+                                ${renderAvatar(ch.name, 16)}
+                                <span>${escapeHtml(displayName)}</span>
+                            </div>
+                            ${variantCount > 1 ? `<span class="tm-ac-variant-badge">${variantCount} ${variantLabel}</span>` : ""}
                         </div>
                         <div class="tm-ac-hist-text">${renderEmotes(mainText)}</div>
                         <div class="tm-ac-hist-meta">
-                            <span>${h.chars || mainText.length} симв. ${h.variants.length > 1 ? `(${h.variants.length} вар.)` : ''}</span>
+                            <span>${h.chars || mainText.length} симв.</span>
                             <div class="tm-ac-hist-actions">
-                                <button class="tm-ac-hist-btn pin ${isPinned ? 'active' : ''}" title="${isPinned ? 'Открепить' : 'Закрепить'}">${isPinned ? '📌' : '📍'}</button>
-                                <button class="tm-ac-hist-btn send" title="Удерживайте 1 сек для отправки">📤</button>
-                                <button class="tm-ac-hist-btn preview" title="Предпросмотр">👁</button>
-                                <button class="tm-ac-hist-btn edit" title="Редактировать">✏️</button>
-                                <button class="tm-ac-hist-btn use">Выбрать</button>
-                                <button class="tm-ac-hist-btn delete" title="Удерживайте 1 сек для удаления">🗑</button>
+                                <div class="tm-ac-hist-action-main">
+                                    <button class="tm-ac-hist-btn use" data-tooltip="Загрузить пасту во вкладку «Отправка»" aria-label="Выбрать пасту">Выбрать</button>
+                                    <button class="tm-ac-hist-btn send" data-tooltip="Удерживайте 1 секунду, чтобы отправить" aria-label="Отправить пасту">📤</button>
+                                </div>
+                                <div class="tm-ac-hist-action-tools">
+                                    <button class="tm-ac-hist-btn preview" data-tooltip="Показать предпросмотр" aria-label="Предпросмотр">👁</button>
+                                    <button class="tm-ac-hist-btn edit" data-tooltip="Редактировать текст и варианты" aria-label="Редактировать">✏️</button>
+                                    <button class="tm-ac-hist-btn pin ${isPinned ? "active" : ""}" data-tooltip="${isPinned ? "Открепить от этого фильтра" : "Закрепить в этом фильтре"}" aria-label="${isPinned ? "Открепить" : "Закрепить"}">${isPinned ? "📌" : "📍"}</button>
+                                    <button class="tm-ac-hist-btn delete" data-tooltip="Удерживайте 1 секунду, чтобы удалить" aria-label="Удалить пасту">🗑</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1424,6 +1570,44 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                 } else {
                     textEl.textContent = 'Стоп';
                     statusEl.title = 'Остановлено';
+                }
+            }
+            const cleanText = text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+            if (runStatusCard && runStateEl && runDetailEl && runValueEl) {
+                runStatusCard.classList.toggle('running', type === 'running');
+                runStatusCard.classList.toggle('blocked', type === 'blocked');
+                runStatusCard.classList.toggle('paused', type === 'paused');
+                if (type === 'running') {
+                    const secMatch = text.match(/<b>(.*?)<\/b>/);
+                    if (secMatch) {
+                        runStateEl.textContent = "Автоотправка активна";
+                        runDetailEl.textContent = "Следующее сообщение через";
+                        runValueEl.textContent = `${secMatch[1]}с`;
+                    } else if (cleanText.includes('Отправка')) {
+                        runStateEl.textContent = "Отправка сообщения";
+                        runDetailEl.textContent = "Сообщение передаётся в чат";
+                        runValueEl.textContent = "…";
+                    } else if (cleanText.includes('Отправлено')) {
+                        runStateEl.textContent = "Сообщение отправлено";
+                        runDetailEl.textContent = "Однократная отправка завершена";
+                        runValueEl.textContent = "✓";
+                    } else {
+                        runStateEl.textContent = "Подготовка к отправке";
+                        runDetailEl.textContent = "Запускается автоматический цикл";
+                        runValueEl.textContent = "…";
+                    }
+                } else if (type === 'blocked') {
+                    runStateEl.textContent = cleanText.includes("Нет текста") ? "Добавьте сообщение" : "Отправка недоступна";
+                    runDetailEl.textContent = cleanText || "Проверьте сообщение и состояние чата";
+                    runValueEl.textContent = "!";
+                } else if (type === 'paused') {
+                    runStateEl.textContent = "Пауза";
+                    runDetailEl.textContent = "Автоматическая отправка приостановлена";
+                    runValueEl.textContent = "Ⅱ";
+                } else {
+                    runStateEl.textContent = "Не запущено";
+                    runDetailEl.textContent = "Нажмите «Запустить», чтобы начать отправку";
+                    runValueEl.textContent = "—";
                 }
             }
         }
