@@ -784,7 +784,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                         <div class="tm-ac-interval-control">
                             <input type="number" id="tm-ac-interval" value="5" min="2" max="3600" aria-label="Интервал отправки в секундах">
                             <span class="tm-ac-interval-unit">секунд</span>
-                            <span class="tm-ac-random-tag" tabindex="0" data-tooltip="Фактическая пауза каждый раз немного меняется вокруг указанного значения. Это автоматическая часть текущего режима, а не переключатель.">Случайный интервал</span>
+                            <span class="tm-ac-random-tag" tabindex="0" data-tooltip="Пауза между сообщениями каждый раз немного меняется. Медленный режим Twitch тоже учитывается. Это подсказка, а не переключатель.">Случайный интервал</span>
                         </div>
                     </div>
                     <div class="tm-ac-run-status" id="tm-ac-run-status">
@@ -817,7 +817,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                     </label>
                     <label class="tm-ac-check">
                         <input type="checkbox" id="tm-ac-antispam" ${settings.antiSpamRandomizer ? 'checked' : ''}>
-                        <span class="tm-ac-check-copy"><span>Невидимые символы (Анти-спам)</span><small>Добавляет незаметные разделители, чтобы одинаковые сообщения отличались для фильтров повторов.</small></span>
+                        <span class="tm-ac-check-copy"><span>Невидимые символы (Анти-спам)</span><small>Добавляет два невидимых символа в конец сообщения, чтобы одинаковые тексты отличались для фильтров повторов.</small></span>
                     </label>
 
                     <div class="tm-ac-section-title">Описание (баннеры)</div>
