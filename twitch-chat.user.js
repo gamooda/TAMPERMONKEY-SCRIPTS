@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      11.7
+// @version      11.8
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -298,7 +298,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
 #tm-autochat-panel { width: min(380px, 100vw); max-width: 100vw; }
 #tm-autochat-panel .tm-ac-body { min-width: 0; max-width: 100%; overflow-y: auto; overflow-x: hidden; }
 #tm-autochat-panel .tm-ac-tab-content { width: 100%; max-width: 100%; min-width: 0; }
-#tm-autochat-panel #tm-tab-send, #tm-autochat-panel #tm-tab-send.active { display: flex; flex-direction: column; width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; }
+#tm-autochat-panel #tm-tab-send.active { display: flex; flex-direction: column; width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; }
 #tm-autochat-panel #tm-tab-send > * { max-width: 100%; min-width: 0; }
 #tm-autochat-panel #tm-tab-send textarea { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
 #tm-autochat-panel .tm-ac-interval-card { width: 100%; max-width: 100%; min-width: 0; }
@@ -618,7 +618,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         if (chatInput) {
             const area = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
             if (area) {
-                candidates.add(area);
                 area.querySelectorAll(selectors + ', [data-a-target], [class*="banner"], [class*="notice"], p, span').forEach(node => candidates.add(node));
                 let current = chatInput;
                 while (current && current !== area) {
@@ -628,7 +627,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
             }
         }
         for (const element of candidates) {
-            if (!element || !element.isConnected) continue;
+            if (!element || !element.isConnected || element.matches('textarea, input, [contenteditable="true"], .chat-input__textarea')) continue;
             const style = window.getComputedStyle(element);
             if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || !element.getClientRects().length) continue;
             const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
