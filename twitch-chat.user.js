@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      11.5
+// @version      11.6
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -284,6 +284,16 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
 #tm-edit-modal .tm-edit-btn.add { background: #29252f; color: #d9c4ff; border: 1px solid #4a3b60; }
 #tm-edit-modal .tm-edit-btn.cancel { border: 1px solid #373740; }
 @media (max-width: 560px) { #tm-edit-modal .tm-edit-content { width: 94vw; min-height: 0; } #tm-edit-modal .tm-edit-body { padding: 12px; } .tm-variant-content { flex-direction: column; } .tm-variant-tools { flex: 0 0 auto; flex-direction: row; width: 100%; } .tm-variant-tools .tm-edit-btn { flex: 1; } .tm-ac-hist-action-tools { gap: 2px; padding-left: 5px; } .tm-ac-hist-action-tools .tm-ac-hist-btn { padding: 5px; } }
+#tm-autochat-panel #tm-tab-send.active { display: flex; }
+#tm-autochat-panel .tm-ac-header-btn { width: auto; min-width: 57px; height: 28px; padding: 0 8px; gap: 5px; border: 1px solid #3d3d46; border-radius: 7px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+#tm-autochat-panel .tm-ac-header-btn.start::after { content: 'Старт'; }
+#tm-autochat-panel .tm-ac-header-btn.stop::after { content: 'Стоп'; }
+#tm-autochat-panel .tm-ac-header-btn.start { background: rgba(0,168,101,.14); border-color: rgba(0,168,101,.38); color: #45e0a1; }
+#tm-autochat-panel .tm-ac-header-btn.start:hover { background: #087f54; color: #fff; }
+#tm-autochat-panel .tm-ac-header-btn.stop { background: rgba(233,25,22,.12); border-color: rgba(233,25,22,.35); color: #ff8a88; }
+#tm-autochat-panel .tm-ac-header-btn.stop:hover { background: #a83232; color: #fff; }
+#tm-autochat-panel .tm-ac-header-btn:focus-visible, #tm-autochat-toggle:focus-visible { outline: 2px solid #bf94ff; outline-offset: 2px; }
+@media (max-width: 420px) { #tm-autochat-panel .tm-ac-header { gap: 6px; padding: 9px 8px; } #tm-autochat-panel .tm-ac-header-right { gap: 4px; } #tm-autochat-panel .tm-ac-header-title { font-size: 12px; } #tm-autochat-panel .tm-ac-header-btn { min-width: 51px; padding: 0 6px; } #tm-autochat-panel .tm-ac-status-pill { padding: 4px 5px; font-size: 10px; } }
         `;
         document.head.appendChild(style);
     }
@@ -747,6 +757,8 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                         <span class="tm-ac-status-dot"></span>
                         <span class="tm-ac-status-text">Стоп</span>
                     </div>
+                    <button class="tm-ac-header-btn start" id="tm-ac-start" title="Запустить автоотправку" aria-label="Запустить автоотправку">▶</button>
+                    <button class="tm-ac-header-btn stop" id="tm-ac-stop" style="display:none" title="Остановить автоотправку" aria-label="Остановить автоотправку">■</button>
                     <button id="tm-autochat-toggle" title="Закрыть">×</button>
                 </div>
             </div>
@@ -779,15 +791,11 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                         <span class="tm-ac-run-indicator"></span>
                         <div class="tm-ac-run-status-copy">
                             <span class="tm-ac-run-state" id="tm-ac-run-state">Не запущено</span>
-                            <span class="tm-ac-run-detail" id="tm-ac-run-detail">Нажмите «Запустить», чтобы начать отправку</span>
+                            <span class="tm-ac-run-detail" id="tm-ac-run-detail">Нажмите «Старт» в заголовке, чтобы начать отправку</span>
                         </div>
                         <strong class="tm-ac-run-value" id="tm-ac-run-value">—</strong>
                     </div>
-                    <div class="tm-ac-run-actions">
-                        <button class="tm-ac-run-btn" id="tm-ac-start" type="button"><span>▶</span> Запустить</button>
-                        <button class="tm-ac-run-btn" id="tm-ac-stop" type="button" style="display:none"><span>■</span> Остановить</button>
-                    </div>
-                    <div class="tm-ac-run-note">Автоотправка повторяется с заданным интервалом, пока вы не нажмёте «Остановить».</div>
+                    <div class="tm-ac-run-note">Запуск и остановка доступны по кнопкам «Старт» и «Стоп» в заголовке панели.</div>
                 </div>
 
                 <div class="tm-ac-tab-content" id="tm-tab-history">
@@ -1018,7 +1026,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                             const start = currentEmoteTarget.selectionStart; const end = currentEmoteTarget.selectionEnd; const text = currentEmoteTarget.value;
                             currentEmoteTarget.value = text.substring(0, start) + " " + name + " " + text.substring(end);
                             currentEmoteTarget.selectionStart = currentEmoteTarget.selectionEnd = start + name.length + 2;
-                            currentEmoteTarget.dispatchEvent(new Event("input", { bubbles: true }));
+                            currentEmoteTarget.dispatchEvent(new Event("tm-emote-inserted", { bubbles: true }));
                             currentEmoteTarget.focus();
                         }
                     });
@@ -1043,6 +1051,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
             charCount.classList.toggle('over', len >= MAX_CHARS);
         }
         updateCharCount();
+        msgEl.addEventListener("tm-emote-inserted", updateCharCount);
         msgEl.addEventListener('input', () => {
             if (msgEl.value.length > MAX_CHARS) msgEl.value = msgEl.value.slice(0, MAX_CHARS);
             updateCharCount();
@@ -1195,6 +1204,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                 });
                 const ta = row.querySelector('textarea');
                 ta.addEventListener('input', updateVariantLabels);
+                ta.addEventListener('tm-emote-inserted', updateVariantLabels);
                 row.querySelector('.add-emote-btn').addEventListener('click', (e) => {
                     e.stopPropagation();
                     openEmotePicker(ta);
@@ -1606,7 +1616,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                     runValueEl.textContent = "Ⅱ";
                 } else {
                     runStateEl.textContent = "Не запущено";
-                    runDetailEl.textContent = "Нажмите «Запустить», чтобы начать отправку";
+                    runDetailEl.textContent = "Нажмите «Старт» в заголовке, чтобы начать отправку";
                     runValueEl.textContent = "—";
                 }
             }
