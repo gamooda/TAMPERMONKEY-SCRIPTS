@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      11.6
+// @version      11.7
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -294,6 +294,33 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
 #tm-autochat-panel .tm-ac-header-btn.stop:hover { background: #a83232; color: #fff; }
 #tm-autochat-panel .tm-ac-header-btn:focus-visible, #tm-autochat-toggle:focus-visible { outline: 2px solid #bf94ff; outline-offset: 2px; }
 @media (max-width: 420px) { #tm-autochat-panel .tm-ac-header { gap: 6px; padding: 9px 8px; } #tm-autochat-panel .tm-ac-header-right { gap: 4px; } #tm-autochat-panel .tm-ac-header-title { font-size: 12px; } #tm-autochat-panel .tm-ac-header-btn { min-width: 51px; padding: 0 6px; } #tm-autochat-panel .tm-ac-status-pill { padding: 4px 5px; font-size: 10px; } }
+#tm-autochat-panel, #tm-autochat-panel * { box-sizing: border-box; }
+#tm-autochat-panel { width: min(380px, 100vw); max-width: 100vw; }
+#tm-autochat-panel .tm-ac-body { min-width: 0; max-width: 100%; overflow-y: auto; overflow-x: hidden; }
+#tm-autochat-panel .tm-ac-tab-content { width: 100%; max-width: 100%; min-width: 0; }
+#tm-autochat-panel #tm-tab-send, #tm-autochat-panel #tm-tab-send.active { display: flex; flex-direction: column; width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; }
+#tm-autochat-panel #tm-tab-send > * { max-width: 100%; min-width: 0; }
+#tm-autochat-panel #tm-tab-send textarea { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+#tm-autochat-panel .tm-ac-interval-card { width: 100%; max-width: 100%; min-width: 0; }
+#tm-autochat-panel .tm-ac-interval-control { position: relative; width: 100%; max-width: 100%; min-width: 0; }
+#tm-autochat-panel .tm-ac-random-tag { position: static; max-width: 100%; min-width: 0; }
+#tm-autochat-panel .tm-ac-random-tag[data-tooltip]::after { left: auto; right: 0; top: auto; bottom: calc(100% + 8px); width: min(230px, 100%); max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; white-space: normal; }
+#tm-edit-modal .tm-edit-content { box-sizing: border-box; width: min(720px, 94vw); max-width: 94vw; }
+#tm-edit-modal .tm-edit-body { box-sizing: border-box; width: 100%; min-width: 0; }
+#tm-edit-modal .tm-variant-row { box-sizing: border-box; width: 100%; min-width: 0; }
+#tm-edit-modal .tm-variant-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; width: 100%; min-width: 0; }
+#tm-edit-modal .tm-variant-heading { display: flex; align-items: center; gap: 9px; flex: 1 1 auto; min-width: 0; }
+#tm-edit-modal .tm-variant-tools { display: flex; flex: 0 0 auto; flex-direction: row; align-items: center; gap: 6px; width: auto; min-width: 0; }
+#tm-edit-modal .tm-variant-tools .tm-edit-btn { flex: 0 0 auto; min-height: 30px; padding: 6px 9px !important; }
+#tm-edit-modal .tm-edit-textarea { display: block; width: 100%; max-width: 100%; min-width: 0; min-height: 145px; height: 145px; flex: none; box-sizing: border-box; resize: vertical; }
+#tm-edit-modal .tm-variant-content { display: block; width: 100%; min-width: 0; }
+.tm-ac-followers-status { display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 10px 12px; border: 1px solid rgba(255,184,0,.35); border-radius: 9px; background: rgba(255,184,0,.08); color: #f0d18a; }
+.tm-ac-followers-status[hidden] { display: none !important; }
+.tm-ac-followers-icon { display: flex; flex: 0 0 20px; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: rgba(255,184,0,.16); color: #ffc85c; font-size: 12px; font-weight: 800; }
+.tm-ac-followers-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.tm-ac-followers-copy strong { color: #f2d99f; font-size: 12px; line-height: 1.35; }
+.tm-ac-followers-copy small { color: #b6a47e; font-size: 11px; line-height: 1.4; }
+@media (max-width: 560px) { #tm-edit-modal .tm-variant-tools { flex: 0 0 auto; flex-direction: row; width: auto; } #tm-edit-modal .tm-variant-tools .tm-edit-btn { flex: 0 0 auto; } #tm-edit-modal .tm-edit-textarea { width: 100%; min-height: 130px; height: 130px; } }
         `;
         document.head.appendChild(style);
     }
@@ -574,6 +601,42 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         if (/вы забанены|you are banned|banned from this channel/i.test(allText)) return { type: 'ban', message: 'Вы забанены в этом чате' };
         return null;
     }
+    function getFollowersOnlyInfo() {
+        const patterns = [
+            /чат\s+(?:доступен\s+)?только\s+для\s+(?:фолловеров|подписчиков)/i,
+            /только\s+(?:фолловеры|подписчики)\b.{0,120}(?:чат|писать|отправлять сообщения|общаться)/i,
+            /режим\s+только\s+для\s+(?:фолловеров|подписчиков)/i,
+            /(?:подпишитесь|подпишись)\s+на\s+(?:этот\s+)?канал.{0,120}(?:чат|сообщени|писать)/i,
+            /followers?[-\s]only(?:\s+chat)?/i,
+            /only\s+followers?\b.{0,140}\b(?:chat|send messages|speak|chatting)\b/i,
+            /follow\s+this\s+channel.{0,120}(?:chat|send messages|chatting)/i,
+            /you\s+must\s+follow.{0,120}(?:chat|send messages|chatting)/i
+        ];
+        const selectors = '[data-a-target="chat-rules-banner"], [data-a-target*="followers-only"], [data-test-selector*="chat-rules"], .chat-input__textarea, [role="alert"], [class*="chat-rules-banner"]';
+        const candidates = new Set(document.querySelectorAll(selectors));
+        const chatInput = document.querySelector('div[data-a-target="chat-input"]') || document.querySelector('.chat-input__textarea');
+        if (chatInput) {
+            const area = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
+            if (area) {
+                candidates.add(area);
+                area.querySelectorAll(selectors + ', [data-a-target], [class*="banner"], [class*="notice"], p, span').forEach(node => candidates.add(node));
+                let current = chatInput;
+                while (current && current !== area) {
+                    if (current.previousElementSibling) candidates.add(current.previousElementSibling);
+                    current = current.parentElement;
+                }
+            }
+        }
+        for (const element of candidates) {
+            if (!element || !element.isConnected) continue;
+            const style = window.getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || !element.getClientRects().length) continue;
+            const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
+            if (!text || text.length > 500) continue;
+            if (patterns.some(pattern => pattern.test(text))) return text;
+        }
+        return '';
+    }
     function getSlowModeInfo() {
         const chatArea = document.querySelector('.chat-room') || document.querySelector('[data-test-selector="chat-room-component-layout"]') || document.body; const text = (chatArea.innerText || ''); const ruMatch = text.match(/медленный режим[^0-9]*(\d+)\s*секунд/i);
         if (ruMatch) return parseInt(ruMatch[1], 10);
@@ -787,6 +850,10 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                             <span class="tm-ac-random-tag" tabindex="0" data-tooltip="Пауза между сообщениями каждый раз немного меняется. Медленный режим Twitch тоже учитывается. Это подсказка, а не переключатель.">Случайный интервал</span>
                         </div>
                     </div>
+                    <div class="tm-ac-followers-status" id="tm-ac-followers-status" role="status" hidden>
+                        <span class="tm-ac-followers-icon">!</span>
+                        <span class="tm-ac-followers-copy"><strong>Чат только для фолловеров</strong><small>Чтобы отправлять сообщения, подпишитесь на канал.</small></span>
+                    </div>
                     <div class="tm-ac-run-status" id="tm-ac-run-status">
                         <span class="tm-ac-run-indicator"></span>
                         <div class="tm-ac-run-status-copy">
@@ -955,7 +1022,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
             } else {
                 isChatCurrentlyVisible = false;
                 toggleSidebarBtn.classList.remove('visible');
-                if (panel.classList.contains('open')) closePanel();
             }
         }
         refreshAutoChatVisibility = updateChatVisibility;
@@ -964,21 +1030,13 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         toggleSidebarBtn.addEventListener('click', (e) => {
             if (!e.isTrusted) return;
             e.preventDefault(); e.stopPropagation();
-            if (!isChatCurrentlyVisible) return;
-            panel.classList.toggle('open');
-            toggleSidebarBtn.classList.toggle('open');
-            toggleSidebarBtn.innerHTML = panel.classList.contains('open') ? '▶' : '◀';
+            if (!isChatCurrentlyVisible || panel.classList.contains('open')) return;
+            panel.classList.add('open');
+            toggleSidebarBtn.classList.add('open');
+            toggleSidebarBtn.innerHTML = '▶';
         });
         panel.querySelector('#tm-autochat-toggle').addEventListener('click', (e) => { e.stopPropagation(); closePanel(); });
-        document.addEventListener('click', (e) => {
-            if (!panel.classList.contains('open')) return;
-            if (e.target.closest('#tm-autochat-panel')) return;
-            if (e.target.closest('#tm-autochat-toggle-btn')) return;
-            if (e.target.closest('#tm-modal-overlay')) return;
-            if (e.target.closest('#tm-edit-modal')) return;
-            if (e.target.closest('#tm-emote-picker-modal')) return;
-            closePanel();
-        });
+
         const tabs = panel.querySelectorAll('.tm-ac-tab'); const contents = panel.querySelectorAll('.tm-ac-tab-content');
         tabs.forEach(tab => {
             tab.addEventListener('click', () => {
@@ -1001,7 +1059,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         const statusEl = panel.querySelector('#tm-ac-status'); const historyList = panel.querySelector('#tm-ac-history-list'); const charCount = panel.querySelector('#tm-ac-char-count'); const livePreviewCheck = panel.querySelector('#tm-ac-live-preview');
         const runStatusCard = panel.querySelector('#tm-ac-run-status'); const runStateEl = panel.querySelector('#tm-ac-run-state'); const runDetailEl = panel.querySelector('#tm-ac-run-detail'); const runValueEl = panel.querySelector('#tm-ac-run-value');
         const antispamCheck = panel.querySelector('#tm-ac-antispam'); const spoilerEnabledCheck = panel.querySelector('#tm-ac-spoiler-enabled'); const spoilerNeverCheck = panel.querySelector('#tm-ac-spoiler-never'); const spoilerNeverRow = panel.querySelector('#tm-ac-spoiler-never-row');
-        const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
+        const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const followersOnlyStatusEl = panel.querySelector('#tm-ac-followers-status'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
         const filterText = panel.querySelector('#tm-ac-history-filter-text'); const filterList = panel.querySelector('#tm-ac-history-filter-list'); const emoteSearch = emoteModal.querySelector('#tm-ep-search'); const emoteList = emoteModal.querySelector('#tm-ep-list');
         function openEmotePicker(targetTextarea) {
             currentEmoteTarget = targetTextarea;
@@ -1185,16 +1243,16 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                 row.className = 'tm-variant-row';
                 row.innerHTML = `
                     <div class="tm-variant-top">
-                        <strong class="tm-variant-title">Вариант</strong>
-                        <span class="tm-variant-count">0 / ${MAX_CHARS}</span>
-                    </div>
-                    <div class="tm-variant-content">
-                        <textarea class="tm-edit-textarea" maxlength="${MAX_CHARS}">${escapeHtml(val)}</textarea>
+                        <div class="tm-variant-heading">
+                            <strong class="tm-variant-title">Вариант</strong>
+                            <span class="tm-variant-count">0 / ${MAX_CHARS}</span>
+                        </div>
                         <div class="tm-variant-tools">
-                            <button class="tm-edit-btn add-emote-btn" type="button">😀 Смайл</button>
-                            <button class="tm-edit-btn cancel remove-btn" type="button">✕ Удалить</button>
+                            <button class="tm-edit-btn add-emote-btn" type="button" title="Вставить смайл">😀 Смайл</button>
+                            <button class="tm-edit-btn cancel remove-btn" type="button" title="Удалить вариант">✕ Удалить</button>
                         </div>
                     </div>
+                    <textarea class="tm-edit-textarea" maxlength="${MAX_CHARS}">${escapeHtml(val)}</textarea>
                 `;
                 row.querySelector('.remove-btn').addEventListener('click', () => {
                     if (variantsContainer.children.length > 1) {
@@ -1592,7 +1650,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                     if (secMatch) {
                         runStateEl.textContent = "Автоотправка активна";
                         runDetailEl.textContent = "Следующее сообщение через";
-                        runValueEl.textContent = `${secMatch[1]}с`;
+                        runValueEl.textContent = secMatch[1];
                     } else if (cleanText.includes('Отправка')) {
                         runStateEl.textContent = "Отправка сообщения";
                         runDetailEl.textContent = "Сообщение передаётся в чат";
@@ -1633,6 +1691,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
             if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
         }
         function updateChatStatusUI() {
+            if (followersOnlyStatusEl) followersOnlyStatusEl.hidden = !getFollowersOnlyInfo();
             const slowMode = getSlowModeInfo();
             if (slowMode > 0) {
                 slowmodeText.textContent = slowMode;
