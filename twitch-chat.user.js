@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      12.2
+// @version      12.3
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -26,8 +26,8 @@
             antiSpamRandomizer: !!d.antiSpamRandomizer
         };
     }
-    const STYLE_ID = 'tm-telegram-spoiler-style'; const followersOnlyCache = new Map(); const followersFocusAttempts = new Set();
-    let refreshAutoChatVisibility = null; let refreshChatListeners = null; let refreshChannelState = null; let refreshFollowersOnlyStatus = null;
+    const STYLE_ID = 'tm-telegram-spoiler-style';
+    let refreshAutoChatVisibility = null; let refreshChatListeners = null; let refreshChannelState = null;
     function injectStyle() {
         if (document.getElementById(STYLE_ID)) return;
         const style = document.createElement('style');
@@ -351,7 +351,15 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             wrap.addEventListener('mouseleave', () => wrap.classList.remove('tm-revealed'));
         });
     }
-    const emoteMap = new Map(); const channelEmoteNames = new Set(); let globalEmotesLoaded = false;
+    const emoteMap = new Map();
+    const channelEmoteNames = new Set();
+    const globalSevenTVEmotes = new Map();
+    let globalEmotesLoaded = false;
+    let activeSevenTVChannel = '';
+    let sevenTVRequestId = 0;
+    function notifyEmotesUpdated() {
+        try { document.dispatchEvent(new CustomEvent('tm-emotes-updated')); } catch {}
+    }
     function collectEmotes() {
         let changed = false;
         const selectors = [
@@ -364,96 +372,121 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         document.querySelectorAll(selectors).forEach(img => {
             const name = (img.getAttribute('alt') || img.getAttribute('data-emote-name') || '').trim();
             if (!name || name.length > 40) return;
-            const src = img.currentSrc || img.src || img.getAttribute('data-src') || ''; const srcset = img.getAttribute('srcset') || '';
+            const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
+            const srcset = img.getAttribute('srcset') || '';
             if (!src && !srcset) return;
             const existing = emoteMap.get(name);
             if (existing) {
-                const existingScore = (existing.src ? 1 : 0) + (existing.srcset ? 1 : 0); const newScore = (src ? 1 : 0) + (srcset ? 1 : 0);
+                const existingScore = (existing.src ? 1 : 0) + (existing.srcset ? 1 : 0);
+                const newScore = (src ? 1 : 0) + (srcset ? 1 : 0);
                 if (existingScore >= newScore) return;
             }
             emoteMap.set(name, { src, srcset });
             changed = true;
         });
-        if (changed) {
-            try { document.dispatchEvent(new CustomEvent('tm-emotes-updated')); } catch {}
-        }
+        if (changed) notifyEmotesUpdated();
     }
     function addSevenTVEmotes(emotes, isChannel = false) {
         if (!Array.isArray(emotes)) return false;
         let changed = false;
-        for (const e of emotes) {
-            if (!e || !e.name || !e.id) continue;
-            const name = e.name;
-            if (name.length > 40) continue;
-            const existing = emoteMap.get(name);
-            if (existing && !isChannel) continue;
-            if (existing && existing.src && existing.src.includes(e.id)) continue;
-            const base = `https://cdn.7tv.app/emote/${e.id}`;
-            emoteMap.set(name, {
-                src: `${base}/2x.webp`,
-                srcset: `${base}/1x.webp 1x, ${base}/2x.webp 2x, ${base}/3x.webp 3x, ${base}/4x.webp 4x`
-            });
-            if (isChannel) channelEmoteNames.add(name);
-            changed = true;
+        for (const emote of emotes) {
+            if (!emote || !emote.name || !emote.id || emote.name.length > 40) continue;
+            const name = emote.name;
+            const base = 'https://cdn.7tv.app/emote/' + emote.id;
+            const data = {
+                src: base + '/2x.webp',
+                srcset: base + '/1x.webp 1x, ' + base + '/2x.webp 2x, ' + base + '/3x.webp 3x, ' + base + '/4x.webp 4x'
+            };
+            if (isChannel) {
+                channelEmoteNames.add(name);
+                const existing = emoteMap.get(name);
+                if (existing && existing.src === data.src && existing.srcset === data.srcset) continue;
+                emoteMap.set(name, data);
+                changed = true;
+            } else {
+                const previousGlobal = globalSevenTVEmotes.get(name);
+                globalSevenTVEmotes.set(name, data);
+                if (!channelEmoteNames.has(name) && !emoteMap.has(name)) {
+                    emoteMap.set(name, data);
+                    changed = true;
+                }
+                if (!previousGlobal || previousGlobal.src !== data.src || previousGlobal.srcset !== data.srcset) changed = true;
+            }
         }
         return changed;
+    }
+    function clearChannelSevenTVEmotes(channelLogin) {
+        sevenTVRequestId++;
+        activeSevenTVChannel = channelLogin || '';
+        channelEmoteNames.forEach(name => {
+            const globalEmote = globalSevenTVEmotes.get(name);
+            if (globalEmote) emoteMap.set(name, globalEmote);
+            else emoteMap.delete(name);
+        });
+        channelEmoteNames.clear();
+        notifyEmotesUpdated();
     }
     async function getTwitchUserId(login) {
         if (!login) return null;
         try {
-            const res = await fetch(`https://decapi.me/twitch/id/${encodeURIComponent(login)}`);
-            if (res.ok) {
-                const id = (await res.text()).trim();
+            const response = await fetch('https://decapi.me/twitch/id/' + encodeURIComponent(login));
+            if (response.ok) {
+                const id = (await response.text()).trim();
                 if (/^\d+$/.test(id)) return id;
             }
         } catch {}
         try {
-            const res = await fetch(`https://api.ivr.fi/v2/twitch/user?login=${encodeURIComponent(login)}`);
-            if (res.ok) {
-                const data = await res.json();
+            const response = await fetch('https://api.ivr.fi/v2/twitch/user?login=' + encodeURIComponent(login));
+            if (response.ok) {
+                const data = await response.json();
                 if (Array.isArray(data) && data.length > 0 && data[0].id) return String(data[0].id);
             }
         } catch {}
         return null;
     }
     async function fetchSevenTVEmotes(channelLogin) {
-        if (!channelLogin || ['directory', 'popout', 'videos', 'settings'].includes(channelLogin)) return;
-        let changed = false;
+        if (!channelLogin || ['directory', 'popout', 'videos', 'settings'].includes(channelLogin)) return null;
+        if (activeSevenTVChannel !== channelLogin) clearChannelSevenTVEmotes(channelLogin);
+        const requestId = ++sevenTVRequestId;
+        const isCurrentRequest = () => requestId === sevenTVRequestId && activeSevenTVChannel === channelLogin;
         if (!globalEmotesLoaded) {
             try {
-                const res = await fetch('https://7tv.io/v3/emote-sets/global');
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data && data.emotes && addSevenTVEmotes(data.emotes, false)) {
-                        changed = true;
+                const response = await fetch('https://7tv.io/v3/emote-sets/global');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (!isCurrentRequest()) return null;
+                    if (data && Array.isArray(data.emotes)) {
+                        addSevenTVEmotes(data.emotes, false);
                         globalEmotesLoaded = true;
                     }
                 }
             } catch {}
         }
+        if (!isCurrentRequest()) return null;
         try {
             const twitchId = await getTwitchUserId(channelLogin);
-            if (twitchId) {
-                const res = await fetch(`https://7tv.io/v3/users/twitch/${encodeURIComponent(twitchId)}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data && data.emote_set && Array.isArray(data.emote_set.emotes)) {
-                        if (addSevenTVEmotes(data.emote_set.emotes, true)) changed = true;
-                    }
-                }
-            }
-        } catch {}
-        if (changed) {
-            try { document.dispatchEvent(new CustomEvent('tm-emotes-updated')); } catch {}
+            if (!isCurrentRequest() || !twitchId) return null;
+            const response = await fetch('https://7tv.io/v3/users/twitch/' + encodeURIComponent(twitchId));
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (!isCurrentRequest()) return null;
+            if (!data || !data.emote_set || !Array.isArray(data.emote_set.emotes)) return null;
+            addSevenTVEmotes(data.emote_set.emotes, true);
+            notifyEmotesUpdated();
+            const count = channelEmoteNames.size;
+            document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', { detail: { channel: channelLogin, count } }));
+            return count;
+        } catch {
+            if (isCurrentRequest()) document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', { detail: { channel: channelLogin, count: null } }));
+            return null;
         }
     }
+    async function refreshSevenTVEmotes(channelLogin) {
+        if (!channelLogin || ['directory', 'popout', 'videos', 'settings'].includes(channelLogin)) return null;
+        clearChannelSevenTVEmotes(channelLogin);
+        return fetchSevenTVEmotes(channelLogin);
+    }
     collectEmotes();
-    (async () => {
-        const parts = window.location.pathname.split('/').filter(Boolean);
-        if (parts.length > 0 && !['directory', 'popout', 'videos', 'settings'].includes(parts[0])) {
-            await fetchSevenTVEmotes(parts[0].toLowerCase());
-        }
-    })();
     function renderEmotes(text) {
         if (!text) return '';
         let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -535,302 +568,34 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         if (/вы забанены|you are banned|banned from this channel/i.test(allText)) return { type: 'ban', message: 'Вы забанены в этом чате' };
         return null;
     }
-    function formatFollowersDuration(durationText) {
-        const units = /(\d+)\s*(weeks?|wks?|недел(?:я|и|ю|ь|ей)?|months?|mos?|месяц(?:а|ев)?|days?|день|дня|дней|hours?|hrs?|час(?:а|ов)?|minutes?|mins?|минут(?:а|ы)?|seconds?|secs?|секунд(?:а|ы)?)/gi;
-        const labels = {
-            week: ['неделя', 'недели', 'недель'],
-            month: ['месяц', 'месяца', 'месяцев'],
-            day: ['день', 'дня', 'дней'],
-            hour: ['час', 'часа', 'часов'],
-            minute: ['минута', 'минуты', 'минут'],
-            second: ['секунда', 'секунды', 'секунд']
-        };
-        const plural = (value, forms) => {
-            const n = value % 100; const last = value % 10;
-            return n >= 11 && n <= 14 ? forms[2] : last === 1 ? forms[0] : last >= 2 && last <= 4 ? forms[1] : forms[2];
-        };
-        const parts = [];
-        for (const match of durationText.matchAll(units)) {
-            const value = parseInt(match[1], 10); const unit = match[2].toLowerCase();
-            let key = '';
-            if (/week|wk|недел/.test(unit)) key = 'week';
-            else if (/month|mo|месяц/.test(unit)) key = 'month';
-            else if (/day|день|дня|дней/.test(unit)) key = 'day';
-            else if (/hour|hr|час/.test(unit)) key = 'hour';
-            else if (/minute|min|минут/.test(unit)) key = 'minute';
-            else if (/second|sec|секунд/.test(unit)) key = 'second';
-            if (key && value > 0) parts.push(`${value} ${plural(value, labels[key])}`);
-        }
-        return parts.join(' ');
-    }
-    function extractFollowersMessage(element) {
-        const clone = element.cloneNode(true);
-        clone.querySelectorAll('button, [role="button"], a, input, textarea, [contenteditable="true"], svg, img, [aria-hidden="true"], [class*="button"], [data-a-target*="follow"]').forEach(node => node.remove());
-        return (clone.innerText || clone.textContent || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
-    }
-    function parseFollowersDurationSeconds(durationText) {
-        const units = /(\d+)\s*(weeks?|wks?|недел(?:я|и|ю|ь|ей)?|months?|mos?|месяц(?:а|ев)?|days?|день|дня|дней|hours?|hrs?|час(?:а|ов)?|minutes?|mins?|минут(?:а|ы)?|seconds?|secs?|секунд(?:а|ы)?)/gi;
-        let total = 0;
-        for (const match of String(durationText || '').matchAll(units)) {
-            const value = parseInt(match[1], 10);
-            const unit = match[2].toLowerCase();
-            if (/week|wk|недел/.test(unit)) total += value * 604800;
-            else if (/month|mo|месяц/.test(unit)) total += value * 2592000;
-            else if (/day|день|дня|дней/.test(unit)) total += value * 86400;
-            else if (/hour|hr|час/.test(unit)) total += value * 3600;
-            else if (/minute|min|минут/.test(unit)) total += value * 60;
-            else if (/second|sec|секунд/.test(unit)) total += value;
-        }
-        return total > 0 ? total : null;
-    }
-    function formatFollowersSeconds(totalSeconds) {
-        let left = Math.max(0, Math.ceil(totalSeconds));
-        const labels = {
-            month: ['месяц', 'месяца', 'месяцев'],
-            week: ['неделя', 'недели', 'недель'],
-            day: ['день', 'дня', 'дней'],
-            hour: ['час', 'часа', 'часов'],
-            minute: ['минута', 'минуты', 'минут'],
-            second: ['секунда', 'секунды', 'секунд']
-        };
-        const plural = (value, forms) => {
-            const n = value % 100;
-            const last = value % 10;
-            return n >= 11 && n <= 14 ? forms[2] : last === 1 ? forms[0] : last >= 2 && last <= 4 ? forms[1] : forms[2];
-        };
-        const units = [
-            ['month', 2592000],
-            ['week', 604800],
-            ['day', 86400],
-            ['hour', 3600],
-            ['minute', 60],
-            ['second', 1]
-        ];
-        const parts = [];
-        for (const [key, size] of units) {
-            const value = Math.floor(left / size);
-            if (value > 0) {
-                parts.push(value + ' ' + plural(value, labels[key]));
-                left -= value * size;
-            }
-        }
-        return parts.join(' ') || '0 секунд';
-    }
-    function findCollapsedFollowersBanner(chatInput) {
-        const phrase = /(?:чат\s+только\s+для\s+(?:фолловеров|подписчиков)|followers?[-\s]+only(?:\s+chat)?|chat\s+is\s+followers?[-\s]+only)/i;
-        const candidates = new Set();
-        const collect = root => {
-            if (!root || root.nodeType !== 1) return;
-            candidates.add(root);
-            root.querySelectorAll('p, span, div, [data-a-target], [data-test-selector], [role="alert"]').forEach(node => candidates.add(node));
-        };
-        const scope = chatInput?.closest('.chat-input') || chatInput?.parentElement?.parentElement || chatInput?.parentElement;
-        if (scope) collect(scope);
-        let current = chatInput;
-        let depth = 0;
-        while (current && current.parentElement && depth++ < 8) {
-            const parent = current.parentElement;
-            let sibling = current.previousElementSibling;
-            let count = 0;
-            while (sibling && count++ < 4) {
-                collect(sibling);
-                sibling = sibling.previousElementSibling;
-            }
-            sibling = current.nextElementSibling;
-            count = 0;
-            while (sibling && count++ < 2) {
-                collect(sibling);
-                sibling = sibling.nextElementSibling;
-            }
-            current = parent;
-        }
-        const matches = [];
-        for (const element of candidates) {
-            if (!element.isConnected) continue;
-            const style = window.getComputedStyle(element);
-            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || !element.getClientRects().length) continue;
-            const text = (element.innerText || element.textContent || element.getAttribute('aria-label') || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
-            if (text && text.length <= 220 && phrase.test(text)) matches.push({ element, text });
-        }
-        matches.sort((a, b) => a.text.length - b.text.length);
-        return matches[0] || null;
-    }
-    function requestFollowersBannerExpand(channelName, chatInput, banner) {
-        if (!channelName || followersFocusAttempts.has(channelName)) return;
-        let target = null;
-        if (chatInput && chatInput.isConnected) {
-            target = chatInput.matches('[contenteditable="true"], textarea, input, [role="textbox"]') ? chatInput : chatInput.querySelector('[contenteditable="true"], textarea, input, [role="textbox"], .chat-input__textarea') || chatInput;
-        }
-        if (!target || !target.isConnected || !target.getClientRects().length) target = banner?.element || null;
-        if (!target || !target.isConnected || !target.getClientRects().length) return;
-        followersFocusAttempts.add(channelName);
-        const previousFocus = document.activeElement;
-        const rect = target.getBoundingClientRect();
-        const eventData = {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            view: window,
-            button: 0,
-            buttons: 1,
-            clientX: rect.left + rect.width / 2,
-            clientY: rect.top + rect.height / 2,
-            pointerId: 1,
-            pointerType: 'mouse',
-            isPrimary: true
-        };
-        try {
-            if (typeof PointerEvent === 'function') target.dispatchEvent(new PointerEvent('pointerdown', eventData));
-            else target.dispatchEvent(new MouseEvent('pointerdown', eventData));
-            target.dispatchEvent(new MouseEvent('mousedown', eventData));
-            if (typeof PointerEvent === 'function') target.dispatchEvent(new PointerEvent('pointerup', { ...eventData, buttons: 0 }));
-            else target.dispatchEvent(new MouseEvent('pointerup', { ...eventData, buttons: 0 }));
-            target.dispatchEvent(new MouseEvent('mouseup', { ...eventData, buttons: 0 }));
-            if (typeof target.click === 'function') target.click();
-        } catch {}
-        setTimeout(() => {
-            if (refreshFollowersOnlyStatus) refreshFollowersOnlyStatus();
-            if (previousFocus && previousFocus !== document.body && previousFocus !== document.documentElement && previousFocus !== target && previousFocus.isConnected && (document.activeElement === target || target.contains(document.activeElement))) {
-                try { previousFocus.focus({ preventScroll: true }); } catch { try { previousFocus.focus(); } catch {} }
-            }
-        }, 260);
-        setTimeout(() => { if (refreshFollowersOnlyStatus) refreshFollowersOnlyStatus(); }, 650);
-    }
     function getFollowersOnlyInfo() {
         const patterns = [
-            /чат.{0,100}(?:только для фолловеров|только для подписчиков)/i,
-            /для общения в чате.{0,120}(?:нужно|необходимо|требуется).{0,80}(?:фолловер|подписчик)/i,
-            /(?:нужно|необходимо|требуется) быть (?:фолловером|подписчиком)/i,
-            /только (?:фолловеры|подписчики)\b.{0,140}(?:чат|писать|отправлять сообщения|общаться)/i,
-            /режим только для (?:фолловеров|подписчиков)/i,
-            /followers?[-\s]only(?:\s+chat)?/i,
-            /(?:to chat|chatting|participate in chat).{0,140}(?:must|need to|required to) follow/i,
-            /(?:must|need to|required to) follow.{0,160}(?:chat|participat|send messages|for\s+\d)/i,
-            /you must be following.{0,140}(?:chat|participat|send messages|\d)/i,
-            /follow this channel.{0,140}(?:chat|send messages|chatting|\d)/i
-        ];
-        const unit = '(?:weeks?|wks?|недел(?:я|и|ю|ь|ей)?|months?|mos?|месяц(?:а|ев)?|days?|день|дня|дней|hours?|hrs?|час(?:а|ов)?|minutes?|mins?|минут(?:а|ы)?|seconds?|secs?|секунд(?:а|ы)?)';
-        const sequence = '\\d+\\s*' + unit + '(?:\\s*(?:(?:,|and|и)\\s*)?\\d+\\s*' + unit + '){0,4}';
-        const remainingPatterns = [
-            new RegExp('(?:ждать|ожидать)\\s+осталось\\s*[:—-]?\\s*(' + sequence + ')', 'i'),
-            new RegExp('осталось\\s*(?:ждать|ожидать)?\\s*[:—-]?\\s*(' + sequence + ')', 'i'),
-            new RegExp('(?:remaining|time\\s+left|time\\s+remaining|left)\\s*[:—-]?\\s*(' + sequence + ')', 'i'),
-            new RegExp('(' + sequence + ')\\s*(?:осталось|осталось ждать|remaining|left)\\b', 'i'),
-            new RegExp('(?:wait|waiting)\\s+(?:for|another)?\\s*[:—-]?\\s*(' + sequence + ')', 'i'),
-            new RegExp('(?:можно будет писать|сможете общаться|can chat|can send messages)\\s+(?:через|in)\\s*(' + sequence + ')', 'i')
-        ];
-        const requiredPatterns = [
-            new RegExp('(?:нужно быть фолловером|нужно быть подписчиком|необходимо быть фолловером|необходимо быть подписчиком|требуется быть фолловером|требуется быть подписчиком)\\s*(' + sequence + ')', 'i'),
-            new RegExp('(?:follow|following)\\s+(?:this\\s+channel\\s+)?for\\s+(' + sequence + ')', 'i'),
-            new RegExp('(?:for at least|minimum follow(?:ing)? time\\s*[:—-]?)\\s*(' + sequence + ')', 'i')
+            /чат\s+только\s+для\s+(?:фолловеров|подписчиков)/i,
+            /только\s+(?:фолловеры|подписчики)\b.{0,120}(?:чат|писать|отправлять сообщения|общаться)/i,
+            /(?:для общения в чате|чтобы писать в чат|чтобы общаться в чате).{0,120}(?:нужно|необходимо|требуется|должны).{0,80}(?:фолловер|подписчик|отслеживать)/i,
+            /followers?[-\s]+only(?:\s+chat)?/i,
+            /chat\s+is\s+in\s+followers?[-\s]+only\s+mode/i,
+            /(?:to chat|chatting|participate in chat).{0,120}(?:must|need to|required to) follow/i,
+            /(?:must|need to|required to) follow.{0,140}(?:chat|participat|send messages)/i
         ];
         const selectors = '[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [data-a-target*="followers-only"], [class*="chat-rules"], [class*="followers-only"], [role="alert"]';
-        const chatInput = document.querySelector('[data-a-target="chat-input"]') || document.querySelector('.chat-input__textarea') || document.querySelector('.chat-input [contenteditable="true"]');
-        const channelName = (getChannelInfo().name || window.location.pathname.split('/').filter(Boolean)[0] || '').toLowerCase();
-        const collapsedBanner = findCollapsedFollowersBanner(chatInput);
-        const candidates = new Set(document.querySelectorAll(selectors));
+        const scopes = new Set();
+        const chatRoom = document.querySelector('section[data-test-selector="chat-room-component-layout"]') || document.querySelector('.chat-room');
+        const chatInput = document.querySelector('[data-a-target="chat-input"]');
+        if (chatRoom) scopes.add(chatRoom);
         if (chatInput) {
-            const area = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
-            if (area) {
-                area.querySelectorAll(selectors + ', p, span, div, [data-a-target], [data-test-selector]').forEach(node => candidates.add(node));
-                let current = chatInput;
-                let depth = 0;
-                while (current && current.parentElement && depth++ < 8) {
-                    const previous = current.previousElementSibling;
-                    if (previous) {
-                        candidates.add(previous);
-                        previous.querySelectorAll(selectors + ', p, span, div, [data-a-target], [data-test-selector]').forEach(node => candidates.add(node));
-                    }
-                    current = current.parentElement;
-                }
-            }
+            const chatArea = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
+            if (chatArea) scopes.add(chatArea);
         }
-        if (collapsedBanner) candidates.add(collapsedBanner.element);
-        const isFollowButton = element => {
-            const label = [element.innerText, element.textContent, element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('data-a-target')].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-            return /^(?:follow(?:\s+(?:this\s+)?channel)?|отслеживать|подписаться)(?:\s|$)/i.test(label);
-        };
-        let best = null;
-        let bestScore = -1;
-        for (const element of candidates) {
-            if (!element || !element.isConnected || element.matches('textarea, input, [contenteditable="true"], .chat-input__textarea, button')) continue;
+        document.querySelectorAll(selectors).forEach(element => scopes.add(element));
+        for (const element of scopes) {
+            if (!element || !element.isConnected) continue;
             const style = window.getComputedStyle(element);
             if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || !element.getClientRects().length) continue;
-            const bannerScope = element.closest('[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [data-a-target*="followers-only"], [class*="chat-rules"], [class*="followers-only"], [role="alert"]') || element;
-            const text = extractFollowersMessage(bannerScope);
-            if (!text || text.length > 900) continue;
-            const remainingMatch = remainingPatterns.map(pattern => text.match(pattern)).find(Boolean);
-            const requiredMatch = requiredPatterns.map(pattern => text.match(pattern)).find(Boolean);
-            const followerContext = patterns.some(pattern => pattern.test(text));
-            if (!followerContext && !remainingMatch && !requiredMatch) continue;
-            const controls = [];
-            if (bannerScope.matches('button, [role="button"], a, [data-a-target*="follow"]')) controls.push(bannerScope);
-            bannerScope.querySelectorAll('button, [role="button"], a, [data-a-target*="follow"]').forEach(control => controls.push(control));
-            const followButton = controls.some(control => {
-                const controlStyle = window.getComputedStyle(control);
-                return controlStyle.display !== 'none' && controlStyle.visibility !== 'hidden' && control.getClientRects().length > 0 && isFollowButton(control);
-            });
-            const remainingRaw = remainingMatch ? remainingMatch[1] : '';
-            const remaining = remainingRaw ? formatFollowersDuration(remainingRaw) : '';
-            let required = requiredMatch ? formatFollowersDuration(requiredMatch[1]) : '';
-            if (!required && !remaining) {
-                const requiredMatchFallback = text.match(/(?:фолловером|подписчиком)\s+(\d+\s*(?:days?|день|дня|дней|weeks?|недел(?:я|и|ю|ь|ей)?))/i);
-                if (requiredMatchFallback) required = formatFollowersDuration(requiredMatchFallback[1]);
-            }
-            const info = { text, remaining, required, notFollowing: followButton, channel: channelName };
-            if (remainingRaw || required) {
-                const previous = followersOnlyCache.get(channelName);
-                const parsedSeconds = remainingRaw ? parseFollowersDurationSeconds(remainingRaw) : null;
-                const sameReading = parsedSeconds !== null && previous && previous.remainingRaw === remainingRaw && previous.remainingCapturedAt;
-                followersOnlyCache.set(channelName, {
-                    ...previous,
-                    ...info,
-                    remaining: remainingRaw ? remaining : (previous?.remaining || ''),
-                    required: required || previous?.required || '',
-                    remainingRaw: remainingRaw || previous?.remainingRaw || '',
-                    remainingSeconds: parsedSeconds !== null ? parsedSeconds : (previous?.remainingSeconds ?? null),
-                    remainingCapturedAt: parsedSeconds !== null ? (sameReading ? previous.remainingCapturedAt : Date.now()) : (previous?.remainingCapturedAt || 0)
-                });
-            }
-            const score = (remaining ? 10000 : 0) + (required ? 5000 : 0) + (followButton ? 1000 : 0) + Math.min(text.length, 500);
-            if (score > bestScore) {
-                best = info;
-                bestScore = score;
-            }
+            const text = (element.innerText || element.textContent || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+            if (text && patterns.some(pattern => pattern.test(text))) return true;
         }
-        const hasBanner = !!collapsedBanner || !!best;
-        if (!hasBanner) {
-            if (channelName) {
-                followersOnlyCache.delete(channelName);
-                followersFocusAttempts.delete(channelName);
-            }
-            return null;
-        }
-        const cached = followersOnlyCache.get(channelName);
-        if (cached && (cached.remaining || cached.required)) {
-            const result = { ...cached, notFollowing: !!best?.notFollowing };
-            if (cached.remainingSeconds !== null && cached.remainingCapturedAt) {
-                const elapsed = Math.max(0, (Date.now() - cached.remainingCapturedAt) / 1000);
-                result.remaining = formatFollowersSeconds(cached.remainingSeconds - elapsed);
-            }
-            if (!cached.remaining && collapsedBanner) requestFollowersBannerExpand(channelName, chatInput, collapsedBanner);
-            return result;
-        }
-        if (best?.notFollowing) {
-            if (collapsedBanner) requestFollowersBannerExpand(channelName, chatInput, collapsedBanner);
-            return best;
-        }
-        if (collapsedBanner) {
-            requestFollowersBannerExpand(channelName, chatInput, collapsedBanner);
-            return {
-                text: best?.text || collapsedBanner.text,
-                remaining: '',
-                required: best?.required || '',
-                notFollowing: false,
-                channel: channelName
-            };
-        }
-        return best;
+        return false;
     }
     function getSlowModeInfo() {
         const chatArea = document.querySelector('.chat-room') || document.querySelector('[data-test-selector="chat-room-component-layout"]') || document.body; const text = (chatArea.innerText || ''); const ruMatch = text.match(/медленный режим[^0-9]*(\d+)\s*секунд/i);
@@ -1047,7 +812,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                     </div>
                     <div class="tm-ac-followers-status" id="tm-ac-followers-status" role="status" hidden>
                         <span class="tm-ac-followers-icon">!</span>
-                        <span class="tm-ac-followers-copy"><strong id="tm-ac-followers-title">Чат только для фолловеров</strong><small id="tm-ac-followers-detail">Чтобы отправлять сообщения, подпишитесь на канал.</small><small id="tm-ac-followers-source" hidden></small></span>
+                        <span class="tm-ac-followers-copy"><strong id="tm-ac-followers-title">Включён чат только для фолловеров</strong><small id="tm-ac-followers-detail">Отправка сообщений ограничена настройками канала.</small></span>
                     </div>
                     <div class="tm-ac-run-status" id="tm-ac-run-status">
                         <span class="tm-ac-run-indicator"></span>
@@ -1081,6 +846,12 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                         <input type="checkbox" id="tm-ac-antispam" ${settings.antiSpamRandomizer ? 'checked' : ''}>
                         <span class="tm-ac-check-copy"><span>Невидимые символы (Анти-спам)</span><small>Добавляет два невидимых символа в конец сообщения, чтобы одинаковые тексты отличались для фильтров повторов.</small></span>
                     </label>
+
+                    <div class="tm-ac-section-title">Смайлы 7TV</div>
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <button id="tm-ac-7tv-refresh" class="tm-ac-hist-btn" style="width:100%; padding:8px;">↻ Обновить смайлы 7TV канала</button>
+                        <small id="tm-ac-7tv-status" style="color:#adadb8; font-size:11px; line-height:1.4;">Смайлы загружаются автоматически при переходе на канал.</small>
+                    </div>
 
                     <div class="tm-ac-section-title">Описание (баннеры)</div>
                     <label class="tm-ac-check">
@@ -1259,7 +1030,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         const statusEl = panel.querySelector('#tm-ac-status'); const historyList = panel.querySelector('#tm-ac-history-list'); const charCount = panel.querySelector('#tm-ac-char-count'); const livePreviewCheck = panel.querySelector('#tm-ac-live-preview');
         const runStatusCard = panel.querySelector('#tm-ac-run-status'); const runStateEl = panel.querySelector('#tm-ac-run-state'); const runDetailEl = panel.querySelector('#tm-ac-run-detail'); const runValueEl = panel.querySelector('#tm-ac-run-value');
         const antispamCheck = panel.querySelector('#tm-ac-antispam'); const spoilerEnabledCheck = panel.querySelector('#tm-ac-spoiler-enabled'); const spoilerNeverCheck = panel.querySelector('#tm-ac-spoiler-never'); const spoilerNeverRow = panel.querySelector('#tm-ac-spoiler-never-row');
-        const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const followersOnlyStatusEl = panel.querySelector('#tm-ac-followers-status'); const followersOnlyTitleEl = panel.querySelector('#tm-ac-followers-title'); const followersOnlyDetailEl = panel.querySelector('#tm-ac-followers-detail'); const followersOnlySourceEl = panel.querySelector('#tm-ac-followers-source'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
+        const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const followersOnlyStatusEl = panel.querySelector('#tm-ac-followers-status'); const followersOnlyTitleEl = panel.querySelector('#tm-ac-followers-title'); const followersOnlyDetailEl = panel.querySelector('#tm-ac-followers-detail'); const sevenTVRefreshBtn = panel.querySelector('#tm-ac-7tv-refresh'); const sevenTVRefreshStatus = panel.querySelector('#tm-ac-7tv-status'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
         const filterText = panel.querySelector('#tm-ac-history-filter-text'); const filterList = panel.querySelector('#tm-ac-history-filter-list'); const emoteSearch = emoteModal.querySelector('#tm-ep-search'); const emoteList = emoteModal.querySelector('#tm-ep-list');
         function openEmotePicker(targetTextarea) {
             currentEmoteTarget = targetTextarea;
@@ -1292,6 +1063,23 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 });
             }
         }
+        sevenTVRefreshBtn.addEventListener('click', async () => {
+            const channelLogin = getChannelInfo().name;
+            if (!channelLogin) {
+                sevenTVRefreshStatus.textContent = 'Откройте страницу канала Twitch для обновления смайлов.';
+                return;
+            }
+            sevenTVRefreshBtn.disabled = true;
+            sevenTVRefreshStatus.textContent = 'Обновление смайлов 7TV...';
+            try {
+                const count = await refreshSevenTVEmotes(channelLogin);
+                if (getChannelInfo().name !== channelLogin) return;
+                sevenTVRefreshStatus.textContent = count === null ? 'Не удалось загрузить смайлы 7TV.' : 'Обновлено: ' + count + ' смайлов';
+                renderEmotePickerList(emoteSearch.value);
+            } finally {
+                sevenTVRefreshBtn.disabled = false;
+            }
+        });
         emoteSearch.addEventListener('input', (e) => renderEmotePickerList(e.target.value));
         emoteModal.querySelector('#tm-ep-close-btn').addEventListener('click', () => emoteModal.classList.remove('open'));
         emoteModal.addEventListener('click', (e) => { if (e.target === emoteModal) emoteModal.classList.remove('open'); });
@@ -1798,14 +1586,21 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         renderHistory();
         document.addEventListener('tm-emotes-updated', () => {
             if (currentTab === 'history') renderHistory();
+            if (emoteModal.classList.contains('open')) renderEmotePickerList(emoteSearch.value);
+        });
+        document.addEventListener('tm-7tv-emotes-loaded', event => {
+            if (!event.detail || event.detail.channel !== getChannelInfo().name) return;
+            sevenTVRefreshStatus.textContent = event.detail.count === null ? 'Не удалось загрузить смайлы 7TV.' : 'Загружено: ' + event.detail.count + ' смайлов';
         });
         function updateChannelState() {
             const currentCh = getChannelInfo().name;
             if (currentCh === lastKnownChannel) return;
             lastKnownChannel = currentCh;
-            channelEmoteNames.forEach(name => emoteMap.delete(name));
-            channelEmoteNames.clear();
-            if (currentCh) fetchSevenTVEmotes(currentCh);
+            clearChannelSevenTVEmotes(currentCh);
+            if (currentCh) {
+                if (sevenTVRefreshStatus) sevenTVRefreshStatus.textContent = 'Загрузка смайлов 7TV канала...';
+                fetchSevenTVEmotes(currentCh);
+            } else if (sevenTVRefreshStatus) sevenTVRefreshStatus.textContent = 'Откройте страницу канала Twitch для загрузки смайлов.';
             const hist = getHistory();
             if (currentCh && hist.some(h => h.channel && h.channel.name === currentCh)) currentFilter = currentCh;
             else currentFilter = 'all';
@@ -1892,17 +1687,11 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         }
         function updateChatStatusUI() {
             if (followersOnlyStatusEl) {
-                const followersInfo = getFollowersOnlyInfo();
-                followersOnlyStatusEl.hidden = !followersInfo;
-                if (followersInfo) {
-                    followersOnlySourceEl.hidden = true;
-                    followersOnlyTitleEl.textContent = followersInfo.notFollowing ? 'Чат только для фолловеров' : 'Ограничение для фолловеров';
-                    if (followersInfo.notFollowing) followersOnlyDetailEl.textContent = 'Чтобы отправлять сообщения, нажмите «Отслеживать» на канале.';
-                    else if (followersInfo.remaining) followersOnlyDetailEl.textContent = `Ждать осталось: ${followersInfo.remaining}`;
-                    else if (followersInfo.required) followersOnlyDetailEl.textContent = `Требуемый срок подписки: ${followersInfo.required}`;
-                    else followersOnlyDetailEl.textContent = 'В чате действует ограничение для фолловеров.';
-                    followersOnlySourceEl.textContent = followersInfo.text;
-                    followersOnlySourceEl.hidden = true;
+                const followersOnlyEnabled = getFollowersOnlyInfo();
+                followersOnlyStatusEl.hidden = !followersOnlyEnabled;
+                if (followersOnlyEnabled) {
+                    followersOnlyTitleEl.textContent = 'Включён чат только для фолловеров';
+                    followersOnlyDetailEl.textContent = 'Отправка сообщений ограничена настройками канала.';
                 }
             }
             const slowMode = getSlowModeInfo();
@@ -1933,7 +1722,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 } else startBtn.disabled = false;
             }
         }
-        refreshFollowersOnlyStatus = updateChatStatusUI;
         setInterval(updateChatStatusUI, 1500);
         updateChatStatusUI();
         function scheduleNext(baseSec) {
@@ -2048,6 +1836,23 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         applySpoilerSettings();
         setupSpoilers();
         createAutoChatUI();
+        if (!window.__tmAutoChatHistoryHooks) {
+            window.__tmAutoChatHistoryHooks = true;
+            const refreshChannelAfterNavigation = () => setTimeout(() => { if (refreshChannelState) refreshChannelState(); }, 0);
+            const originalPushState = history.pushState;
+            const originalReplaceState = history.replaceState;
+            history.pushState = function (...args) {
+                const result = originalPushState.apply(this, args);
+                refreshChannelAfterNavigation();
+                return result;
+            };
+            history.replaceState = function (...args) {
+                const result = originalReplaceState.apply(this, args);
+                refreshChannelAfterNavigation();
+                return result;
+            };
+            window.addEventListener('popstate', refreshChannelAfterNavigation);
+        }
         let updateScheduled = false; let pendingPageRecords = [];
         const isInternalNode = node => {
             if (!node || node.nodeType !== 1) return false;
