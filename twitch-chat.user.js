@@ -1,20 +1,98 @@
 // ==UserScript==
-// @name         Twitch Panels Telegram Spoiler + AutoChat
+// @name         StreamChat Assistant
 // @namespace    twitch-panels-telegram-spoiler
-// @version      12.6
-// @description  Telegram-style particle blur + AutoChat with advanced features
+// @version      13.0
+// @description  Unified chat automation, message history and native emote picker for Twitch and Kick
+// @icon         https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/streamchat-icon.svg
 // @match        https://www.twitch.tv/*
+// @match        https://kick.com/*
+// @match        https://www.kick.com/*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
 // ==/UserScript==
 (function () {
     'use strict';
     const STORAGE_KEY = 'tm-autochat-v10'; const MAX_CHARS = 500; const HOLD_SEND_MS = 1000;
+    function getPlatform() {
+        return /(^|\.)kick\.com$/i.test(location.hostname) ? 'kick' : 'twitch';
+    }
+    function getPlatformLabel(platform) {
+        return platform === 'kick' ? 'KICK' : 'TWITCH';
+    }
+    function getHistoryChannelKey(channel) {
+        return (channel?.platform === 'kick' ? 'kick' : 'twitch') + ':' + (channel?.name || 'unknown');
+    }
+    function normalizeStoredHistory(data, fallbackPlatform) {
+        if (!data || typeof data !== 'object') return {};
+        if (!Array.isArray(data.history)) data.history = [];
+        data.history.forEach(entry => {
+            if (!entry || typeof entry !== 'object') return;
+            if (entry.channel && typeof entry.channel === 'object') {
+                if (!['twitch', 'kick'].includes(entry.channel.platform)) entry.channel.platform = fallbackPlatform;
+            }
+            if (!Array.isArray(entry.pinnedIn)) entry.pinnedIn = [];
+            const platform = entry.channel?.platform === 'kick' ? 'kick' : 'twitch';
+            entry.pinnedIn = entry.pinnedIn.map(pin => {
+                if (['all', 'unknown', 'all-pastes'].includes(pin) || String(pin).includes(':')) return pin;
+                return platform + ':' + pin;
+            });
+        });
+        return data;
+    }
+    function getHistoryIdentity(entry) {
+        const channel = entry?.channel || {};
+        const platform = channel.platform === 'kick' ? 'kick' : 'twitch';
+        const name = channel.name || 'unknown';
+        return JSON.stringify([platform, name, entry?.variants || [entry?.text || '']]);
+    }
     function loadData() {
-        try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
-        catch { return {}; }
+        let localData = {};
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (raw) localData = normalizeStoredHistory(JSON.parse(raw), getPlatform());
+        } catch {}
+        if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function') {
+            try {
+                let sharedData = GM_getValue(STORAGE_KEY, null);
+                if (!sharedData || typeof sharedData !== 'object' || Array.isArray(sharedData)) {
+                    sharedData = localData;
+                    GM_setValue(STORAGE_KEY, sharedData);
+                    localStorage.removeItem(STORAGE_KEY);
+                    return sharedData;
+                }
+                if (localData && Object.keys(localData).length) {
+                    const merged = { ...sharedData };
+                    Object.keys(localData).forEach(key => {
+                        if (key !== 'history' && merged[key] === undefined) merged[key] = localData[key];
+                    });
+                    const history = Array.isArray(merged.history) ? merged.history.slice() : [];
+                    const identities = new Set(history.map(getHistoryIdentity));
+                    (localData.history || []).forEach(entry => {
+                        const identity = getHistoryIdentity(entry);
+                        if (!identities.has(identity)) {
+                            identities.add(identity);
+                            history.push(entry);
+                        }
+                    });
+                    merged.history = history;
+                    sharedData = merged;
+                    GM_setValue(STORAGE_KEY, sharedData);
+                    localStorage.removeItem(STORAGE_KEY);
+                }
+                return sharedData;
+            } catch {}
+        }
+        return localData;
     }
     function saveData(data) {
+        if (typeof GM_setValue === 'function') {
+            try {
+                GM_setValue(STORAGE_KEY, data);
+                localStorage.removeItem(STORAGE_KEY);
+                return;
+            } catch {}
+        }
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     }
     function getSettings() {
@@ -352,6 +430,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     const emoteMap = new Map();
     const channelEmoteNames = new Set();
     const discoveredEmoteNames = new Set();
+    const kickNativeEmoteNames = new Set();
     const globalSevenTVEmotes = new Map();
     const globalTwitchEmotes = new Map();
     let globalEmotesLoaded = false;
@@ -366,6 +445,34 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     }
     function collectEmotes() {
         let changed = false;
+        if (getPlatform() === 'kick') {
+            const selectors = [
+                'img[src*="files.kick.com/emotes/"]',
+                'img[src*="/emotes/"][alt]',
+                'img[data-emote-name]',
+                'img[alt][data-testid*="emote"]'
+            ].join(',');
+            document.querySelectorAll(selectors).forEach(img => {
+                if (img.closest('#tm-autochat-panel, #tm-preview-container, #tm-emote-picker-modal')) return;
+                const name = (img.getAttribute('alt') || img.getAttribute('data-emote-name') || img.getAttribute('title') || img.closest('[data-emote-name]')?.getAttribute('data-emote-name') || '').trim();
+                const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
+                if (!name || name.length > 48 || !src) return;
+                if (!kickNativeEmoteNames.has(name)) {
+                    kickNativeEmoteNames.add(name);
+                    changed = true;
+                }
+                const existing = emoteMap.get(name);
+                if (!existing || existing.src !== src) {
+                    emoteMap.set(name, { src, srcset: img.getAttribute('srcset') || '' });
+                    changed = true;
+                }
+            });
+            if (changed) {
+                notifyEmotesUpdated();
+                document.dispatchEvent(new CustomEvent('tm-kick-emotes-updated', { detail: { count: kickNativeEmoteNames.size } }));
+            }
+            return;
+        }
         const selectors = [
             'img.seventv-chat-emote',
             'img[class*="seventv"][alt]',
@@ -396,6 +503,13 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             changed = true;
         });
         if (changed) notifyEmotesUpdated();
+    }
+    function clearKickNativeEmotes() {
+        kickNativeEmoteNames.forEach(name => {
+            if (!channelEmoteNames.has(name) && !discoveredEmoteNames.has(name) && !globalSevenTVEmotes.has(name)) emoteMap.delete(name);
+        });
+        kickNativeEmoteNames.clear();
+        notifyEmotesUpdated();
     }
     function addSevenTVEmotes(emotes, isChannel = false) {
         if (!Array.isArray(emotes)) return false;
