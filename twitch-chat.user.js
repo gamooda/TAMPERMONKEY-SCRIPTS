@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      12.4
+// @version      12.5
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -22,8 +22,7 @@
         return {
             livePreview: d.livePreview !== false,
             spoilerEnabled: d.spoilerEnabled !== false,
-            spoilerNeverReveal: !!d.spoilerNeverReveal,
-            antiSpamRandomizer: !!d.antiSpamRandomizer
+            spoilerNeverReveal: !!d.spoilerNeverReveal
         };
     }
     const STYLE_ID = 'tm-telegram-spoiler-style';
@@ -352,6 +351,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     }
     const emoteMap = new Map();
     const channelEmoteNames = new Set();
+    const discoveredEmoteNames = new Set();
     const globalSevenTVEmotes = new Map();
     let globalEmotesLoaded = false;
     let activeSevenTVChannel = '';
@@ -367,15 +367,22 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             'img.seventv-chat-emote',
             'img[class*="seventv"][alt]',
             'img[data-emote-name]',
+            'img[data-a-target="emote-name"]',
             'img.chat-image[alt]',
-            'img.chat-line__message--emote'
+            'img.chat-line__message--emote',
+            'img[src*="static-cdn.jtvnw.net/emoticons/v2"][alt]'
         ].join(',');
         document.querySelectorAll(selectors).forEach(img => {
-            const name = (img.getAttribute('alt') || img.getAttribute('data-emote-name') || '').trim();
+            if (img.closest('#tm-autochat-panel, #tm-preview-container, #tm-emote-picker-modal')) return;
+            const name = (img.getAttribute('alt') || img.getAttribute('data-emote-name') || img.getAttribute('title') || '').trim();
             if (!name || name.length > 40) return;
             const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
             const srcset = img.getAttribute('srcset') || '';
             if (!src && !srcset) return;
+            if (!discoveredEmoteNames.has(name)) {
+                discoveredEmoteNames.add(name);
+                changed = true;
+            }
             const existing = emoteMap.get(name);
             if (existing) {
                 const existingScore = (existing.src ? 1 : 0) + (existing.srcset ? 1 : 0);
@@ -425,9 +432,16 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         channelEmoteNames.forEach(name => {
             const globalEmote = globalSevenTVEmotes.get(name);
             if (globalEmote) emoteMap.set(name, globalEmote);
+            else if (!discoveredEmoteNames.has(name)) emoteMap.delete(name);
+        });
+        discoveredEmoteNames.forEach(name => {
+            if (channelEmoteNames.has(name)) return;
+            const globalEmote = globalSevenTVEmotes.get(name);
+            if (globalEmote) emoteMap.set(name, globalEmote);
             else emoteMap.delete(name);
         });
         channelEmoteNames.clear();
+        discoveredEmoteNames.clear();
         notifyEmotesUpdated();
     }
     function replaceChannelSevenTVEmotes(emotes) {
@@ -761,18 +775,33 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         if (enMatch) return parseInt(enMatch[1], 10);
         return 0;
     }
-    function addInvisibleChars(text) {
-        if (!getSettings().antiSpamRandomizer) return text;
-        const chars = ['\u200b', '\u200c', '\u200d', '\u2060']; const c = chars[Math.floor(Math.random() * chars.length)];
-        return text + c + c;
+    function cleanChatText(text) {
+        return String(text || '').replace(/[\u200B\u200C\u2060\uFEFF]/g, '').replace(/\u200D{2,}$/g, '').trim();
+    }
+    function clearChatInput(input) {
+        input.focus();
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(input);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        try { document.execCommand('delete', false); } catch {}
+        selection.removeAllRanges();
+        if ((input.textContent || '').length) input.textContent = '';
+        const cursor = document.createRange();
+        cursor.selectNodeContents(input);
+        cursor.collapse(false);
+        selection.addRange(cursor);
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
     }
     async function sendChatMessage(text) {
         const restriction = getChatRestriction();
         if (restriction) return { ok: false, restriction };
         const input = findChatInput(); const btn = findSendButton();
         if (!input) return { ok: false, restriction: { type: 'noinput', message: 'Поле чата не найдено' } };
-        const finalText = addInvisibleChars(text);
-        input.focus();
+        const finalText = cleanChatText(text);
+        if (!finalText) return { ok: false, restriction: { type: 'empty', message: 'Сообщение пустое после очистки скрытых символов' } };
+        clearChatInput(input);
         const dt = new DataTransfer();
         dt.setData('text/plain', finalText);
         input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
@@ -1000,8 +1029,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                         <span class="tm-ac-check-copy"><span>Live-превью</span><small>Показывает, как сообщение будет выглядеть в чате, пока вы его набираете.</small></span>
                     </label>
                     <label class="tm-ac-check">
-                        <input type="checkbox" id="tm-ac-antispam" ${settings.antiSpamRandomizer ? 'checked' : ''}>
-                        <span class="tm-ac-check-copy"><span>Невидимые символы (Анти-спам)</span><small>Добавляет два невидимых символа в конец сообщения, чтобы одинаковые тексты отличались для фильтров повторов.</small></span>
+                        <div class="tm-ac-desc">Скрытые символы не добавляются к сообщениям и очищаются перед отправкой.</div>
                     </label>
 
                     <div class="tm-ac-section-title">Смайлы 7TV</div>
@@ -1019,6 +1047,10 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                         <input type="checkbox" id="tm-ac-spoiler-never" ${settings.spoilerNeverReveal ? 'checked' : ''}>
                         <span class="tm-ac-check-copy"><span>Не показывать даже при наведении</span><small>Оставляет баннеры размытыми постоянно, пока включена защита.</small></span>
                     </label>
+
+                    <div class="tm-ac-section-title">История</div>
+                    <button id="tm-ac-clear-history" class="tm-ac-hist-btn" style="width:100%; padding:9px; color:#ff6b6b; background:#302023;">Удерживайте 3 секунды, чтобы очистить историю</button>
+                    <small id="tm-ac-clear-history-status" class="tm-ac-desc">История удалится только после полного удержания кнопки.</small>
 
                     <div class="tm-ac-section-title">Экспорт / Импорт</div>
                     <div style="display:flex; gap:8px;">
@@ -1186,9 +1218,9 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         const msgEl = panel.querySelector('#tm-ac-msg'); const intervalEl = panel.querySelector('#tm-ac-interval'); const startBtn = panel.querySelector('#tm-ac-start'); const stopBtn = panel.querySelector('#tm-ac-stop');
         const statusEl = panel.querySelector('#tm-ac-status'); const historyList = panel.querySelector('#tm-ac-history-list'); const charCount = panel.querySelector('#tm-ac-char-count'); const livePreviewCheck = panel.querySelector('#tm-ac-live-preview');
         const runStatusCard = panel.querySelector('#tm-ac-run-status'); const runStateEl = panel.querySelector('#tm-ac-run-state'); const runDetailEl = panel.querySelector('#tm-ac-run-detail'); const runValueEl = panel.querySelector('#tm-ac-run-value');
-        const antispamCheck = panel.querySelector('#tm-ac-antispam'); const spoilerEnabledCheck = panel.querySelector('#tm-ac-spoiler-enabled'); const spoilerNeverCheck = panel.querySelector('#tm-ac-spoiler-never'); const spoilerNeverRow = panel.querySelector('#tm-ac-spoiler-never-row');
+        const spoilerEnabledCheck = panel.querySelector('#tm-ac-spoiler-enabled'); const spoilerNeverCheck = panel.querySelector('#tm-ac-spoiler-never'); const spoilerNeverRow = panel.querySelector('#tm-ac-spoiler-never-row');
         const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const followersOnlyStatusEl = panel.querySelector('#tm-ac-followers-status'); const followersOnlyTitleEl = panel.querySelector('#tm-ac-followers-title'); const followersOnlyDetailEl = panel.querySelector('#tm-ac-followers-detail'); const sevenTVRefreshBtn = panel.querySelector('#tm-ac-7tv-refresh'); const sevenTVRefreshStatus = panel.querySelector('#tm-ac-7tv-status'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
-        const filterText = panel.querySelector('#tm-ac-history-filter-text'); const filterList = panel.querySelector('#tm-ac-history-filter-list'); const emoteSearch = emoteModal.querySelector('#tm-ep-search'); const emoteList = emoteModal.querySelector('#tm-ep-list');
+        const filterText = panel.querySelector('#tm-ac-history-filter-text'); const filterList = panel.querySelector('#tm-ac-history-filter-list'); const emoteSearch = emoteModal.querySelector('#tm-ep-search'); const emoteList = emoteModal.querySelector('#tm-ep-list'); const clearHistoryBtn = panel.querySelector('#tm-ac-clear-history'); const clearHistoryStatus = panel.querySelector('#tm-ac-clear-history-status');
         function openEmotePicker(targetTextarea) {
             currentEmoteTarget = targetTextarea;
             emoteModal.classList.add('open');
@@ -1198,7 +1230,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         }
         function renderEmotePickerList(query) {
             emoteList.innerHTML = '';
-            const emotes = Array.from(emoteMap.entries()).filter(([name]) => channelEmoteNames.has(name)); const filtered = emotes.filter(([name]) => name.toLowerCase().includes(query.toLowerCase()));
+            const emotes = Array.from(emoteMap.entries()).filter(([name]) => channelEmoteNames.has(name) || discoveredEmoteNames.has(name) || globalSevenTVEmotes.has(name)); const filtered = emotes.filter(([name]) => name.toLowerCase().includes(query.toLowerCase()));
             if (filtered.length === 0) {
                 emoteList.innerHTML = '<div style="color:#adadb8; font-size:13px; padding:20px; width:100%; text-align:center;">Смайлы не найдены</div>';
             } else {
@@ -1281,7 +1313,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         function saveSettings() {
             const d = loadData();
             d.livePreview = livePreviewCheck.checked;
-            d.antiSpamRandomizer = antispamCheck.checked;
+            delete d.antiSpamRandomizer;
             d.spoilerEnabled = spoilerEnabledCheck.checked;
             d.spoilerNeverReveal = spoilerNeverCheck.checked;
             saveData(d);
@@ -1290,7 +1322,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             updateLivePreview(msgEl.value, username);
         }
         livePreviewCheck.addEventListener('change', saveSettings);
-        antispamCheck.addEventListener('change', saveSettings);
         spoilerEnabledCheck.addEventListener('change', saveSettings);
         spoilerNeverCheck.addEventListener('change', saveSettings);
         updateSpoilerLock();
@@ -1337,6 +1368,75 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             });
             if (changed) { d.history = hist; saveData(d); }
             return hist;
+        }
+        let clearHistoryHoldTimer = null; let clearHistoryHoldFrame = null; let clearHistoryHoldStart = 0; let clearHistoryHoldDone = false;
+        const resetClearHistoryHold = () => {
+            if (clearHistoryHoldTimer) { clearTimeout(clearHistoryHoldTimer); clearHistoryHoldTimer = null; }
+            if (clearHistoryHoldFrame) { cancelAnimationFrame(clearHistoryHoldFrame); clearHistoryHoldFrame = null; }
+            clearHistoryBtn.style.background = '';
+            if (!clearHistoryHoldDone) clearHistoryStatus.textContent = 'Удерживайте кнопку 3 секунды. При отпускании раньше история сохранится.';
+        };
+        clearHistoryBtn.addEventListener('pointerdown', event => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            resetClearHistoryHold();
+            clearHistoryHoldDone = false;
+            clearHistoryHoldStart = Date.now();
+            try { clearHistoryBtn.setPointerCapture(event.pointerId); } catch {}
+            clearHistoryStatus.textContent = 'Не отпускайте кнопку...';
+            const updateProgress = () => {
+                const progress = Math.min(1, (Date.now() - clearHistoryHoldStart) / 3000);
+                clearHistoryBtn.style.background = 'linear-gradient(90deg, #9147ff ' + (progress * 100) + '%, #302023 ' + (progress * 100) + '%)';
+                if (progress < 1) clearHistoryHoldFrame = requestAnimationFrame(updateProgress);
+            };
+            updateProgress();
+            clearHistoryHoldTimer = setTimeout(() => {
+                clearHistoryHoldDone = true;
+                const d = loadData();
+                d.history = [];
+                saveData(d);
+                activeHistoryIdx = -1;
+                currentFilter = 'all';
+                renderHistory();
+                clearHistoryBtn.style.background = '#166b48';
+                clearHistoryStatus.textContent = 'История полностью очищена.';
+                clearHistoryHoldTimer = null;
+            }, 3000);
+        });
+        clearHistoryBtn.addEventListener('pointerup', resetClearHistoryHold);
+        clearHistoryBtn.addEventListener('pointercancel', resetClearHistoryHold);
+        clearHistoryBtn.addEventListener('lostpointercapture', resetClearHistoryHold);
+        clearHistoryBtn.addEventListener('contextmenu', event => event.preventDefault());
+        clearHistoryBtn.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); });
+        let variantCycleSignature = ''; let variantCycleOrder = []; let variantCyclePosition = 0; let variantCycleLast = -1;
+        function shuffleVariantIndices(indices) {
+            const result = indices.slice();
+            for (let i = result.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [result[i], result[j]] = [result[j], result[i]];
+            }
+            return result;
+        }
+        function getNextHistoryVariant(variants, historyIndex) {
+            const list = (Array.isArray(variants) ? variants : []).map(value => String(value || '').trim()).filter(Boolean);
+            if (!list.length) return '';
+            const signature = String(historyIndex) + ':' + JSON.stringify(list);
+            if (signature !== variantCycleSignature) {
+                variantCycleSignature = signature;
+                variantCycleOrder = list.length > 1 ? [0, ...shuffleVariantIndices(Array.from({ length: list.length - 1 }, (_, index) => index + 1))] : [0];
+                variantCyclePosition = 0;
+                variantCycleLast = -1;
+            } else if (variantCyclePosition >= variantCycleOrder.length) {
+                variantCycleOrder = shuffleVariantIndices(Array.from({ length: list.length }, (_, index) => index));
+                if (list.length > 1 && variantCycleOrder[0] === variantCycleLast) {
+                    const swapIndex = 1 + Math.floor(Math.random() * (variantCycleOrder.length - 1));
+                    [variantCycleOrder[0], variantCycleOrder[swapIndex]] = [variantCycleOrder[swapIndex], variantCycleOrder[0]];
+                }
+                variantCyclePosition = 0;
+            }
+            const nextIndex = variantCycleOrder[variantCyclePosition++];
+            variantCycleLast = nextIndex;
+            return list[nextIndex] || '';
         }
         function addToHistory(variants) {
             if (!variants || variants.length === 0 || !variants[0].trim()) return;
@@ -1670,9 +1770,9 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                             setTimeout(() => { if (!isRunning) setStatus('Стоп'); }, 3000);
                             return;
                         }
-                        const randVariant = entry?.variants[Math.floor(Math.random() * entry.variants.length)] || '';
-                        if (!randVariant.trim()) return;
-                        const result = await sendChatMessage(randVariant);
+                        const nextVariant = getNextHistoryVariant(entry?.variants, idx);
+                        if (!nextVariant) return;
+                        const result = await sendChatMessage(nextVariant);
                         if (result.ok) {
                             if (!isRunning) {
                                 setStatus('✓ Отправлено', 'running');
@@ -1913,7 +2013,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 if (activeHistoryIdx > -1) {
                     const entry = getHistory()[activeHistoryIdx];
                     if (entry && entry.variants && entry.variants.length > 0) {
-                        textToSend = entry.variants[Math.floor(Math.random() * entry.variants.length)];
+                        textToSend = getNextHistoryVariant(entry.variants, activeHistoryIdx);
                     }
                 }
                 const result = await sendChatMessage(textToSend);
@@ -2055,8 +2155,8 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                     }
                     return [...record.addedNodes].some(node => {
                         if (node.nodeType !== 1) return false;
-                        return node.matches('img.seventv-chat-emote, img[class*="seventv"][alt], img[data-emote-name], img.chat-image[alt], img.chat-line__message--emote') ||
-                            !!node.querySelector('img.seventv-chat-emote, img[class*="seventv"][alt], img[data-emote-name], img.chat-image[alt], img.chat-line__message--emote');
+                        return node.matches('img.seventv-chat-emote, img[class*="seventv"][alt], img[data-emote-name], img[data-a-target="emote-name"], img.chat-image[alt], img.chat-line__message--emote, img[src*="static-cdn.jtvnw.net/emoticons/v2"][alt]') ||
+                            !!node.querySelector('img.seventv-chat-emote, img[class*="seventv"][alt], img[data-emote-name], img[data-a-target="emote-name"], img.chat-image[alt], img.chat-line__message--emote, img[src*="static-cdn.jtvnw.net/emoticons/v2"][alt]');
                     });
                 });
                 if (hasStructureChange) setupSpoilers();
