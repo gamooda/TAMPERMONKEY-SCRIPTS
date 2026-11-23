@@ -2360,7 +2360,17 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 if (!result?.ok) {
                     const message = result?.restriction?.message || 'Неизвестная ошибка отправки';
                     setStatus(`⛔ ${message.replace(/\n/g, '<br>')}`, 'blocked');
-                    timeoutId = setTimeout(() => scheduleNext(baseSec), 5000);
+                    if (result?.restriction?.type === 'timeout') {
+                        isRunning = false;
+                        isPausedByUser = false;
+                        clearTimeout(timeoutId);
+                        timeoutId = null;
+                        stopCountdownDisplay();
+                        startBtn.style.display = '';
+                        stopBtn.style.display = 'none';
+                    } else {
+                        timeoutId = setTimeout(() => scheduleNext(baseSec), 5000);
+                    }
                 } else {
                     setStatus('Отправлено', 'running');
                     scheduleNext(baseSec);
