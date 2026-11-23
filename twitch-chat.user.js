@@ -813,10 +813,13 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 const elapsed = Math.max(0, (Date.now() - cached.remainingCapturedAt) / 1000);
                 result.remaining = formatFollowersSeconds(cached.remainingSeconds - elapsed);
             }
-            if (!cached.remaining && collapsedBanner && !result.notFollowing) requestFollowersBannerExpand(channelName, chatInput, collapsedBanner);
+            if (!cached.remaining && collapsedBanner) requestFollowersBannerExpand(channelName, chatInput, collapsedBanner);
             return result;
         }
-        if (best?.notFollowing) return best;
+        if (best?.notFollowing) {
+            if (collapsedBanner) requestFollowersBannerExpand(channelName, chatInput, collapsedBanner);
+            return best;
+        }
         if (collapsedBanner) {
             requestFollowersBannerExpand(channelName, chatInput, collapsedBanner);
             return {
