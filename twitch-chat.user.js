@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      12.3
+// @version      12.4
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -356,6 +356,8 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     let globalEmotesLoaded = false;
     let activeSevenTVChannel = '';
     let sevenTVRequestId = 0;
+    let sevenTVRetryTimer = null;
+    let sevenTVRetryCount = 0;
     function notifyEmotesUpdated() {
         try { document.dispatchEvent(new CustomEvent('tm-emotes-updated')); } catch {}
     }
@@ -416,6 +418,9 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     }
     function clearChannelSevenTVEmotes(channelLogin) {
         sevenTVRequestId++;
+        if (sevenTVRetryTimer) clearTimeout(sevenTVRetryTimer);
+        sevenTVRetryTimer = null;
+        sevenTVRetryCount = 0;
         activeSevenTVChannel = channelLogin || '';
         channelEmoteNames.forEach(name => {
             const globalEmote = globalSevenTVEmotes.get(name);
@@ -425,75 +430,198 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         channelEmoteNames.clear();
         notifyEmotesUpdated();
     }
+    function replaceChannelSevenTVEmotes(emotes) {
+        channelEmoteNames.forEach(name => {
+            const globalEmote = globalSevenTVEmotes.get(name);
+            if (globalEmote) emoteMap.set(name, globalEmote);
+            else emoteMap.delete(name);
+        });
+        channelEmoteNames.clear();
+        addSevenTVEmotes(emotes, true);
+        notifyEmotesUpdated();
+        return channelEmoteNames.size;
+    }
+    async function requestWithRetry(urls, asJson = true, timeoutMs = 6500) {
+        for (const baseUrl of urls) {
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const separator = baseUrl.includes('?') ? '&' : '?';
+                const url = baseUrl + separator + 'tm_cache=' + Date.now() + '_' + attempt + '_' + Math.random().toString(36).slice(2);
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), timeoutMs);
+                try {
+                    const response = await fetch(url, {
+                        method: 'GET',
+                        cache: 'no-store',
+                        credentials: 'omit',
+                        headers: { Accept: '*/*' },
+                        signal: controller.signal
+                    });
+                    if (response.status === 429 || response.status >= 500) {
+                        if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 500));
+                        continue;
+                    }
+                    if (!response.ok) break;
+                    return asJson ? await response.json() : await response.text();
+                } catch {
+                    if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 500));
+                } finally {
+                    clearTimeout(timeout);
+                }
+            }
+        }
+        return null;
+    }
+    function sevenTVApiUrls(path) {
+        return ['https://7tv.io/v3' + path, 'https://api.7tv.app/v3' + path];
+    }
+    async function requestSevenTVApi(path) {
+        return requestWithRetry(sevenTVApiUrls(path), true, 6500);
+    }
     async function getTwitchUserId(login) {
         if (!login) return null;
-        try {
-            const response = await fetch('https://decapi.me/twitch/id/' + encodeURIComponent(login));
-            if (response.ok) {
-                const id = (await response.text()).trim();
-                if (/^\d+$/.test(id)) return id;
-            }
-        } catch {}
-        try {
-            const response = await fetch('https://api.ivr.fi/v2/twitch/user?login=' + encodeURIComponent(login));
-            if (response.ok) {
-                const data = await response.json();
-                if (Array.isArray(data) && data.length > 0 && data[0].id) return String(data[0].id);
-            }
-        } catch {}
+        const encoded = encodeURIComponent(login.toLowerCase());
+        const results = await Promise.all([
+            requestWithRetry(['https://decapi.me/twitch/id/' + encoded], false, 5500),
+            requestWithRetry(['https://api.ivr.fi/v2/twitch/user?login=' + encoded], true, 5500)
+        ]);
+        const decapiId = String(results[0] || '').trim();
+        if (/^\d+$/.test(decapiId)) return decapiId;
+        const ivrData = results[1];
+        if (Array.isArray(ivrData) && ivrData[0] && ivrData[0].id) return String(ivrData[0].id);
+        if (ivrData && ivrData.id) return String(ivrData.id);
         return null;
+    }
+    function getSevenTVUserSearchResults(data) {
+        if (Array.isArray(data)) return data;
+        if (!data || typeof data !== 'object') return [];
+        if (Array.isArray(data.users)) return data.users;
+        if (Array.isArray(data.results)) return data.results;
+        if (Array.isArray(data.data)) return data.data;
+        if (Array.isArray(data.items)) return data.items;
+        return [];
+    }
+    async function findSevenTVUserByLogin(login, isCurrentRequest) {
+        const data = await requestSevenTVApi('/users?query=' + encodeURIComponent(login));
+        if (!isCurrentRequest() || !data) return null;
+        const users = getSevenTVUserSearchResults(data);
+        return users.find(user => {
+            const directName = String(user.username || '').toLowerCase();
+            const connectionMatch = Array.isArray(user.connections) && user.connections.some(connection =>
+                String(connection.platform || '').toLowerCase() === 'twitch' &&
+                String(connection.username || '').toLowerCase() === login.toLowerCase()
+            );
+            return directName === login.toLowerCase() || connectionMatch;
+        }) || null;
+    }
+    async function getSevenTVEmotesFromUser(data, isCurrentRequest) {
+        if (!data || typeof data !== 'object') return null;
+        if (data.emote_set && Array.isArray(data.emote_set.emotes)) return data.emote_set.emotes;
+        if (Array.isArray(data.emotes)) return data.emotes;
+        const connections = Array.isArray(data.connections) ? data.connections : [];
+        const twitchConnection = connections.find(connection => String(connection.platform || '').toLowerCase() === 'twitch') ||
+            (String(data.platform || '').toLowerCase() === 'twitch' ? data : null);
+        const linkedSet = twitchConnection && twitchConnection.emote_set;
+        if (linkedSet && Array.isArray(linkedSet.emotes)) return linkedSet.emotes;
+        if (data.emote_set && Array.isArray(data.emote_set.emotes)) return data.emote_set.emotes;
+        const linkedSetId = (twitchConnection && twitchConnection.emote_set_id) ||
+            data.emote_set_id ||
+            (data.emote_set && data.emote_set.id);
+        if (linkedSetId) {
+            const setData = await requestSevenTVApi('/emote-sets/' + encodeURIComponent(linkedSetId));
+            if (!isCurrentRequest()) return null;
+            if (setData && Array.isArray(setData.emotes)) return setData.emotes;
+            return null;
+        }
+        const partialSets = Array.isArray(data.emote_sets) ? data.emote_sets : [];
+        const fullSets = partialSets.filter(set => set && Array.isArray(set.emotes));
+        if (fullSets.length) return fullSets.flatMap(set => set.emotes);
+        const setIds = partialSets.map(set => set && (set.id || set.emote_set_id)).filter(Boolean);
+        if (setIds.length) {
+            const combined = [];
+            let loadedAny = false;
+            for (const setId of setIds) {
+                const setData = await requestSevenTVApi('/emote-sets/' + encodeURIComponent(setId));
+                if (!isCurrentRequest()) return null;
+                if (setData && Array.isArray(setData.emotes)) {
+                    combined.push(...setData.emotes);
+                    loadedAny = true;
+                }
+            }
+            return loadedAny ? combined : null;
+        }
+        if (twitchConnection || Array.isArray(data.connections) || Array.isArray(data.emote_sets)) return [];
+        return null;
+    }
+    function emitSevenTVLoadStatus(channelLogin, count, retrying = false, attempt = 0, delay = 0) {
+        document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', {
+            detail: { channel: channelLogin, count, retrying, attempt, delay }
+        }));
+    }
+    function scheduleSevenTVRetry(channelLogin, requestId) {
+        const delays = [2500, 6000, 12000];
+        if (sevenTVRetryCount >= delays.length) {
+            emitSevenTVLoadStatus(channelLogin, null, false, sevenTVRetryCount, 0);
+            return;
+        }
+        const delay = delays[sevenTVRetryCount];
+        sevenTVRetryCount++;
+        emitSevenTVLoadStatus(channelLogin, null, true, sevenTVRetryCount, delay);
+        if (sevenTVRetryTimer) clearTimeout(sevenTVRetryTimer);
+        sevenTVRetryTimer = setTimeout(() => {
+            sevenTVRetryTimer = null;
+            if (activeSevenTVChannel !== channelLogin || requestId !== sevenTVRequestId) return;
+            fetchSevenTVEmotes(channelLogin);
+        }, delay);
     }
     async function fetchSevenTVEmotes(channelLogin) {
         if (!channelLogin || ['directory', 'popout', 'videos', 'settings'].includes(channelLogin)) return null;
         if (activeSevenTVChannel !== channelLogin) clearChannelSevenTVEmotes(channelLogin);
         const requestId = ++sevenTVRequestId;
         const isCurrentRequest = () => requestId === sevenTVRequestId && activeSevenTVChannel === channelLogin;
-        if (!globalEmotesLoaded) {
-            try {
-                const response = await fetch('https://7tv.io/v3/emote-sets/global');
-                if (response.ok) {
-                    const data = await response.json();
-                    if (!isCurrentRequest()) return null;
-                    if (data && Array.isArray(data.emotes)) {
-                        addSevenTVEmotes(data.emotes, false);
-                        globalEmotesLoaded = true;
-                    }
-                }
-            } catch {}
-        }
-        if (!isCurrentRequest()) return null;
         try {
+            if (!globalEmotesLoaded) {
+                const globalData = await requestSevenTVApi('/emote-sets/global');
+                if (!isCurrentRequest()) return null;
+                if (globalData && Array.isArray(globalData.emotes)) {
+                    addSevenTVEmotes(globalData.emotes, false);
+                    globalEmotesLoaded = true;
+                }
+            }
+            if (!isCurrentRequest()) return null;
             const twitchId = await getTwitchUserId(channelLogin);
             if (!isCurrentRequest()) return null;
-            if (!twitchId) {
-                document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', { detail: { channel: channelLogin, count: null } }));
-                return null;
+            let userData = null;
+            if (twitchId) {
+                userData = await requestSevenTVApi('/users/twitch/' + encodeURIComponent(twitchId));
+                if (!isCurrentRequest()) return null;
             }
-            const response = await fetch('https://7tv.io/v3/users/twitch/' + encodeURIComponent(twitchId));
+            let emotes = await getSevenTVEmotesFromUser(userData, isCurrentRequest);
             if (!isCurrentRequest()) return null;
-            if (!response.ok) {
-                document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', { detail: { channel: channelLogin, count: null } }));
-                return null;
+            if (!Array.isArray(emotes)) {
+                const searchedUser = await findSevenTVUserByLogin(channelLogin, isCurrentRequest);
+                if (!isCurrentRequest()) return null;
+                if (searchedUser) emotes = await getSevenTVEmotesFromUser(searchedUser, isCurrentRequest);
             }
-            const data = await response.json();
             if (!isCurrentRequest()) return null;
-            if (!data || !data.emote_set || !Array.isArray(data.emote_set.emotes)) {
-                document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', { detail: { channel: channelLogin, count: null } }));
-                return null;
-            }
-            addSevenTVEmotes(data.emote_set.emotes, true);
-            notifyEmotesUpdated();
-            const count = channelEmoteNames.size;
-            document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', { detail: { channel: channelLogin, count } }));
+            if (!Array.isArray(emotes)) throw new Error('7TV emote set unavailable');
+            const count = replaceChannelSevenTVEmotes(emotes);
+            if (sevenTVRetryTimer) clearTimeout(sevenTVRetryTimer);
+            sevenTVRetryTimer = null;
+            sevenTVRetryCount = 0;
+            emitSevenTVLoadStatus(channelLogin, count);
             return count;
         } catch {
-            if (isCurrentRequest()) document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', { detail: { channel: channelLogin, count: null } }));
+            if (isCurrentRequest()) scheduleSevenTVRetry(channelLogin, requestId);
             return null;
         }
     }
     async function refreshSevenTVEmotes(channelLogin) {
         if (!channelLogin || ['directory', 'popout', 'videos', 'settings'].includes(channelLogin)) return null;
-        clearChannelSevenTVEmotes(channelLogin);
+        if (activeSevenTVChannel !== channelLogin) clearChannelSevenTVEmotes(channelLogin);
+        if (sevenTVRetryTimer) clearTimeout(sevenTVRetryTimer);
+        sevenTVRetryTimer = null;
+        sevenTVRetryCount = 0;
+        sevenTVRequestId++;
         return fetchSevenTVEmotes(channelLogin);
     }
     collectEmotes();
@@ -1099,12 +1227,16 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 return;
             }
             sevenTVRefreshBtn.disabled = true;
-            sevenTVRefreshStatus.textContent = 'Обновление смайлов 7TV...';
+            sevenTVRefreshStatus.textContent = 'Перезапуск загрузчика 7TV...';
             try {
                 const count = await refreshSevenTVEmotes(channelLogin);
                 if (getChannelInfo().name !== channelLogin) return;
-                sevenTVRefreshStatus.textContent = count === null ? 'Не удалось загрузить смайлы 7TV.' : 'Обновлено: ' + count + ' смайлов';
-                renderEmotePickerList(emoteSearch.value);
+                if (count !== null) {
+                    sevenTVRefreshStatus.textContent = count === 0 ? 'У канала нет смайлов 7TV.' : 'Обновлено: ' + count + ' смайлов';
+                    renderEmotePickerList(emoteSearch.value);
+                }
+            } catch {
+                if (getChannelInfo().name === channelLogin) sevenTVRefreshStatus.textContent = 'Ошибка перезапуска 7TV. Повторите попытку.';
             } finally {
                 sevenTVRefreshBtn.disabled = false;
             }
@@ -1619,7 +1751,15 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         });
         document.addEventListener('tm-7tv-emotes-loaded', event => {
             if (!event.detail || event.detail.channel !== getChannelInfo().name) return;
-            sevenTVRefreshStatus.textContent = event.detail.count === null ? 'Не удалось загрузить смайлы 7TV.' : 'Загружено: ' + event.detail.count + ' смайлов';
+            if (event.detail.count === null) {
+                if (event.detail.retrying) {
+                    sevenTVRefreshStatus.textContent = 'Сбой 7TV. Повтор ' + event.detail.attempt + '/3 через ' + (event.detail.delay / 1000) + ' с...';
+                } else {
+                    sevenTVRefreshStatus.textContent = 'Не удалось загрузить 7TV. Нажмите обновить ещё раз.';
+                }
+            } else {
+                sevenTVRefreshStatus.textContent = event.detail.count === 0 ? 'У канала нет смайлов 7TV.' : 'Загружено: ' + event.detail.count + ' смайлов';
+            }
         });
         function updateChannelState() {
             const currentCh = getChannelInfo().name;
