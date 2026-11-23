@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         StreamChat Assistant
 // @namespace    twitch-panels-telegram-spoiler
-// @version      13.3
+// @version      13.4
 // @description  Unified chat automation, message history and native emote picker for Twitch and Kick
 // @updateURL    https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/twitch-chat.user.js
 // @downloadURL  https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/twitch-chat.user.js
@@ -1077,30 +1077,27 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         return !kickInputHasContent(input);
     }
     async function sendKickChatMessage(input, text) {
-        const cleared = await clearKickChatInput(input);
-        if (!cleared) return { ok: false, restriction: { type: 'input', message: 'Kick не очистил поле ввода. Сообщение не отправлено.' } };
-        input.focus({ preventScroll: true });
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(input);
-        range.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(range);
-        let inserted = false;
-        try { inserted = document.execCommand('insertText', false, text); } catch {}
-        if (!inserted) {
-            input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true, cancelable: true, composed: true }));
+        try {
+            const cleared = await clearKickChatInput(input);
+            if (!cleared) return { ok: false, restriction: { type: 'input', message: 'Kick не очистил поле ввода. Сообщение не отправлено.' } };
+            input.focus({ preventScroll: true });
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(input);
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.execCommand('insertText', false, text);
+            await new Promise(resolve => setTimeout(resolve, 180));
+            if (!kickInputHasContent(input)) return { ok: false, restriction: { type: 'input', message: 'Kick не подтвердил ввод сообщения. Отправка отменена.' } };
+            const button = findSendButton();
+            if (!button) return { ok: false, restriction: { type: 'sendbutton', message: 'Кнопка #send-message-button не найдена. Проверьте, что чат открыт.' } };
+            if (button.disabled || button.getAttribute('aria-disabled') === 'true') return { ok: false, restriction: { type: 'sendbutton', message: 'Кнопка отправки Kick сейчас отключена.' } };
+            button.click();
+            return { ok: true };
+        } catch (error) {
+            return { ok: false, restriction: { type: 'send', message: 'Ошибка при отправке в Kick: ' + String(error?.message || error) } };
         }
-        await new Promise(resolve => setTimeout(resolve, 180));
-        if (!kickInputHasContent(input)) return { ok: false, restriction: { type: 'input', message: 'Kick не подтвердил ввод сообщения. Отправка отменена.' } };
-        const button = findSendButton();
-        if (!button) return { ok: false, restriction: { type: 'sendbutton', message: 'Кнопка отправки Kick не найдена. Проверьте, что чат открыт.' } };
-        if (button.disabled || button.getAttribute('aria-disabled') === 'true') return { ok: false, restriction: { type: 'sendbutton', message: 'Кнопка отправки Kick сейчас отключена.' } };
-        button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerType: 'mouse', isPrimary: true, button: 0 }));
-        button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window }));
-        button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0, buttons: 0, view: window }));
-        button.click();
-        return { ok: true };
     }
     function clearChatInput(input) {
         input.focus();
@@ -2333,19 +2330,41 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 stopCountdownDisplay();
                 setStatus('Отправка...', 'running');
                 isAutoSending = true;
-                let textToSend = msgEl.value.trim();
-                if (activeHistoryIdx > -1) {
-                    const entry = getHistory()[activeHistoryIdx];
-                    if (entry && entry.variants && entry.variants.length > 0) {
-                        textToSend = getNextHistoryVariant(entry.variants, activeHistoryIdx);
+                let result = null;
+                try {
+                    let textToSend = msgEl.value.trim();
+                    if (activeHistoryIdx > -1) {
+                        const entry = getHistory()[activeHistoryIdx];
+                        if (entry && entry.variants && entry.variants.length > 0) {
+                            textToSend = getNextHistoryVariant(entry.variants, activeHistoryIdx);
+                        }
                     }
+                    const sendTask = sendChatMessage(textToSend);
+                    let sendTimeout = null;
+                    result = await Promise.race([
+                        sendTask,
+                        new Promise(resolve => {
+                            sendTimeout = setTimeout(() => resolve({
+                                ok: false,
+                                restriction: { type: 'timeout', message: 'Kick не завершил отправку за 5 секунд. Цикл остановлен, чтобы не отправить дубль.' }
+                            }), 5000);
+                        })
+                    ]);
+                    if (sendTimeout) clearTimeout(sendTimeout);
+                } catch (error) {
+                    result = { ok: false, restriction: { type: 'send', message: 'Ошибка отправки: ' + String(error?.message || error) } };
+                } finally {
+                    isAutoSending = false;
                 }
-                const result = await sendChatMessage(textToSend);
-                setTimeout(() => { isAutoSending = false; }, 1000);
-                if (!result.ok && result.restriction) {
-                    setStatus(`⛔ ${result.restriction.message.replace(/\n/g, '<br>')}`, 'blocked');
+                if (!isRunning) return;
+                if (!result?.ok) {
+                    const message = result?.restriction?.message || 'Неизвестная ошибка отправки';
+                    setStatus(`⛔ ${message.replace(/\n/g, '<br>')}`, 'blocked');
                     timeoutId = setTimeout(() => scheduleNext(baseSec), 5000);
-                } else scheduleNext(baseSec);
+                } else {
+                    setStatus('Отправлено', 'running');
+                    scheduleNext(baseSec);
+                }
             }, delay);
         }
         startBtn.addEventListener('click', () => {
