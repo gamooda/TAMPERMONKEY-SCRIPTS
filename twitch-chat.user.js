@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      12.0
+// @version      12.1
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -26,22 +26,18 @@
             antiSpamRandomizer: !!d.antiSpamRandomizer
         };
     }
-    const STYLE_ID = 'tm-telegram-spoiler-style'; const DENSITY = 300; const MAX_PARTICLES = 2000; const spawners = new Set();
-    let refreshAutoChatVisibility = null; let refreshChatListeners = null; let refreshChannelState = null;
+    const STYLE_ID = 'tm-telegram-spoiler-style'; const followersOnlyCache = new Map(); const followersFocusAttempts = new Set();
+    let refreshAutoChatVisibility = null; let refreshChatListeners = null; let refreshChannelState = null; let refreshFollowersOnlyStatus = null;
     function injectStyle() {
         if (document.getElementById(STYLE_ID)) return;
         const style = document.createElement('style');
         style.id = STYLE_ID;
         style.textContent = `
 .tm-spoiler-target { position: relative !important; overflow: hidden !important; border-radius: var(--border-radius-medium, 4px); cursor: pointer; display: block; }
-.tm-spoiler-img { filter: blur(22px) brightness(0.5); display: block !important; width: 100% !important; height: auto !important; transition: filter 0.45s ease !important; }
-.tm-spoiler-target.tm-revealed .tm-spoiler-img { filter: blur(0px) brightness(1); }
-.tm-spoiler-canvas { position: absolute; inset: 0; width: 100%; height: 100%; transition: opacity 0.4s ease; pointer-events: none; z-index: 10; }
-.tm-spoiler-target.tm-revealed .tm-spoiler-canvas { opacity: 0; }
-body.tm-spoiler-off .tm-spoiler-img { filter: none !important; transform: none !important; }
-body.tm-spoiler-off .tm-spoiler-canvas { display: none !important; }
-body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(22px) brightness(0.5) !important; }
-body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 !important; }
+.tm-spoiler-img { filter: blur(22px) brightness(0.5); display: block !important; width: 100% !important; height: auto !important; opacity: .94; transform: scale(1.025); transition: opacity .2s ease, transform .2s ease; will-change: opacity, transform; }
+.tm-spoiler-target.tm-revealed .tm-spoiler-img { filter: blur(0) brightness(1); opacity: 1; transform: scale(1); }
+body.tm-spoiler-off .tm-spoiler-img { filter: none !important; transform: none !important; opacity: 1 !important; }
+body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(22px) brightness(0.5) !important; opacity: .94 !important; transform: scale(1.025) !important; }
 @keyframes tm-pulse {
   0% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.6); border-color: rgba(255, 215, 0, 0.8); }
   70% { box-shadow: 0 0 0 12px rgba(255, 215, 0, 0); border-color: rgba(255, 215, 0, 0.8); }
@@ -333,66 +329,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
             document.querySelectorAll('.tm-spoiler-target.tm-revealed').forEach(t => t.classList.remove('tm-revealed'));
         }
     }
-    function createSpawner(wrap, img, canvas) {
-        const ctx = canvas.getContext('2d', { alpha: true });
-        let w, h, particles = [];
-        const ALPHAS = [0.25, 0.45, 0.7, 1.0];
-        function initParticles() {
-            particles = [];
-            const count = Math.min(Math.floor((w * h) / DENSITY), MAX_PARTICLES);
-            for (let i = 0; i < count; i++) {
-                const angle = Math.random() * Math.PI * 2; const speed = (18 + Math.random() * 28) * devicePixelRatio;
-                particles.push({
-                    x: Math.random() * w, y: Math.random() * h,
-                    r: (0.35 + Math.random() * 1.8) * devicePixelRatio,
-                    a: ALPHAS[(Math.random() * ALPHAS.length) | 0],
-                    vx: Math.cos(angle) * speed * 0.022, vy: Math.sin(angle) * speed * 0.022,
-                    phase: Math.random() * Math.PI * 2
-                });
-            }
-        }
-        function resize() {
-            const r = wrap.getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) return;
-            w = canvas.width = r.width * devicePixelRatio;
-            h = canvas.height = r.height * devicePixelRatio;
-            canvas.style.width = r.width + 'px';
-            canvas.style.height = r.height + 'px';
-            initParticles();
-        }
-        const ro = new ResizeObserver(resize);
-        ro.observe(wrap);
-        resize();
-        wrap.addEventListener('mouseenter', () => {
-            if (document.body.classList.contains('tm-spoiler-off')) return;
-            if (document.body.classList.contains('tm-spoiler-never-reveal')) return;
-            wrap.classList.add('tm-revealed');
-        });
-        wrap.addEventListener('mouseleave', () => {
-            wrap.classList.remove('tm-revealed');
-        });
-        return {
-            draw(t) {
-                if (document.body.classList.contains('tm-spoiler-off')) return;
-                if (document.body.classList.contains('tm-spoiler-never-reveal')) {
-                } else if (wrap.classList.contains('tm-revealed')) {
-                    return;
-                }
-                if (!w || !h) return;
-                ctx.clearRect(0, 0, w, h);
-                for (const p of particles) {
-                    p.x += p.vx; p.y += p.vy;
-                    if (p.x < 0) p.x = w; if (p.x > w) p.x = 0;
-                    if (p.y < 0) p.y = h; if (p.y > h) p.y = 0;
-                    const tw = 0.55 + 0.45 * Math.sin(t * 0.004 + p.phase);
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-                    ctx.fillStyle = `rgba(255,255,255,${p.a * tw})`;
-                    ctx.fill();
-                }
-            }
-        };
-    }
     function setupSpoilers() {
         if (!getSettings().spoilerEnabled) return;
         document.querySelectorAll('[data-test-selector="channel_panel_test_selector"] img').forEach(img => {
@@ -408,15 +344,12 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                 }
             }
             img.classList.add('tm-spoiler-img');
-            const canvas = document.createElement('canvas');
-            canvas.className = 'tm-spoiler-canvas';
-            wrap.appendChild(canvas);
-            spawners.add(createSpawner(wrap, img, canvas));
+            wrap.addEventListener('mouseenter', () => {
+                if (document.body.classList.contains('tm-spoiler-off') || document.body.classList.contains('tm-spoiler-never-reveal')) return;
+                wrap.classList.add('tm-revealed');
+            });
+            wrap.addEventListener('mouseleave', () => wrap.classList.remove('tm-revealed'));
         });
-    }
-    function tick(t) {
-        spawners.forEach(s => s.draw(t));
-        requestAnimationFrame(tick);
     }
     const emoteMap = new Map(); const channelEmoteNames = new Set(); let globalEmotesLoaded = false;
     function collectEmotes() {
@@ -630,16 +563,32 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         }
         return parts.join(' ');
     }
+    function extractFollowersMessage(element) {
+        const clone = element.cloneNode(true);
+        clone.querySelectorAll('button, [role="button"], a, input, textarea, [contenteditable="true"], svg, img, [aria-hidden="true"], [class*="button"], [data-a-target*="follow"]').forEach(node => node.remove());
+        return (clone.innerText || clone.textContent || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+    function requestFollowersBannerExpand(channelName, chatInput) {
+        if (followersFocusAttempts.has(channelName) || !chatInput || !chatInput.isConnected) return;
+        const active = document.activeElement;
+        if (active && active !== document.body && active !== document.documentElement && !chatInput.contains(active)) return;
+        const target = chatInput.matches('[contenteditable="true"], textarea, input, [role="textbox"], .chat-input__textarea') ? chatInput : chatInput.querySelector('[contenteditable="true"], textarea, input, [role="textbox"], .chat-input__textarea') || chatInput;
+        if (!target || typeof target.focus !== 'function' || !target.getClientRects().length) return;
+        followersFocusAttempts.add(channelName);
+        try { target.focus({ preventScroll: true }); } catch { try { target.focus(); } catch {} }
+        if (document.activeElement !== target && target === chatInput && typeof target.click === 'function') target.click();
+        [120, 350, 800, 1400].forEach(delay => setTimeout(() => { if (refreshFollowersOnlyStatus) refreshFollowersOnlyStatus(); }, delay));
+    }
     function getFollowersOnlyInfo() {
         const patterns = [
             /чат.{0,100}(?:только для фолловеров|только для подписчиков)/i,
-            /для общения в чате.{0,100}(?:нужно|необходимо|требуется).{0,60}(?:фолловер|подписчик)/i,
-            /(?:нужно|необходимо|требуется) быть (?:фолловером|подписчиком).{0,100}(?:чат|общаться|писать)?/i,
+            /для общения в чате.{0,120}(?:нужно|необходимо|требуется).{0,80}(?:фолловер|подписчик)/i,
+            /(?:нужно|необходимо|требуется) быть (?:фолловером|подписчиком)/i,
             /только (?:фолловеры|подписчики)\b.{0,140}(?:чат|писать|отправлять сообщения|общаться)/i,
             /режим только для (?:фолловеров|подписчиков)/i,
             /followers?[-\s]only(?:\s+chat)?/i,
-            /(?:to chat|chatting|participate in chat).{0,120}(?:must|need to|required to) follow/i,
-            /(?:must|need to|required to) follow.{0,140}(?:chat|participat|send messages|for\s+\d)/i,
+            /(?:to chat|chatting|participate in chat).{0,140}(?:must|need to|required to) follow/i,
+            /(?:must|need to|required to) follow.{0,160}(?:chat|participat|send messages|for\s+\d)/i,
             /you must be following.{0,140}(?:chat|participat|send messages|\d)/i,
             /follow this channel.{0,140}(?:chat|send messages|chatting|\d)/i
         ];
@@ -648,25 +597,29 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         const remainingPatterns = [
             new RegExp(`(?:ждать|ожидать)\\s+осталось\\s*[:—-]?\\s*(${sequence})`, 'i'),
             new RegExp(`осталось\\s*(?:ждать|ожидать)?\\s*[:—-]?\\s*(${sequence})`, 'i'),
-            new RegExp(`(?:remaining|left)\\s*[:—-]?\\s*(${sequence})`, 'i'),
+            new RegExp(`(?:remaining|time\\s+left|time\\s+remaining|left)\\s*[:—-]?\\s*(${sequence})`, 'i'),
             new RegExp(`(${sequence})\\s*(?:осталось|осталось ждать|remaining|left)\\b`, 'i'),
             new RegExp(`(?:wait|waiting)\\s+(?:for|another)?\\s*[:—-]?\\s*(${sequence})`, 'i'),
             new RegExp(`(?:можно будет писать|сможете общаться|can chat|can send messages)\\s+(?:через|in)\\s*(${sequence})`, 'i')
         ];
-        const selectors = '[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [data-a-target*="followers-only"], [class*="chat-rules"], [class*="followers-only"], [role="alert"], [class*="banner"], [class*="notice"]';
+        const requiredPatterns = [
+            new RegExp(`(?:нужно быть фолловером|нужно быть подписчиком|необходимо быть фолловером|необходимо быть подписчиком|требуется быть фолловером|требуется быть подписчиком)\\s*(${sequence})`, 'i'),
+            new RegExp(`(?:follow|following)\\s+(?:this\\s+channel\\s+)?for\\s+(${sequence})`, 'i'),
+            new RegExp(`(?:for at least|minimum follow(?:ing)? time\\s*[:—-]?)\\s*(${sequence})`, 'i')
+        ];
+        const selectors = '[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [data-a-target*="followers-only"], [class*="chat-rules"], [class*="followers-only"], [role="alert"]';
         const candidates = new Set(document.querySelectorAll(selectors));
         const chatInput = document.querySelector('div[data-a-target="chat-input"]') || document.querySelector('.chat-input__textarea');
-        let chatArea = null;
+        const channelName = (getChannelInfo().name || window.location.pathname.split('/').filter(Boolean)[0] || '').toLowerCase();
         if (chatInput) {
-            chatArea = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
-            if (chatArea) {
-                candidates.add(chatArea);
-                chatArea.querySelectorAll(selectors + ', [data-a-target], p, span').forEach(node => candidates.add(node));
+            const area = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
+            if (area) {
+                area.querySelectorAll(selectors).forEach(node => candidates.add(node));
                 let current = chatInput;
-                while (current && current !== chatArea) {
+                while (current && current !== area) {
                     if (current.previousElementSibling) {
                         candidates.add(current.previousElementSibling);
-                        current.previousElementSibling.querySelectorAll(selectors + ', [data-a-target], p, span').forEach(node => candidates.add(node));
+                        current.previousElementSibling.querySelectorAll(selectors + ', p, span, [data-a-target]').forEach(node => candidates.add(node));
                     }
                     current = current.parentElement;
                 }
@@ -676,14 +629,14 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
             const label = [element.innerText, element.textContent, element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('data-a-target')].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
             return /^(?:follow(?:\s+(?:this\s+)?channel)?|отслеживать|подписаться)(?:\s|$)/i.test(label);
         };
-        let best = null;
+        let best = null; let bestScore = -1;
         for (const element of candidates) {
             if (!element || !element.isConnected || element.matches('textarea, input, [contenteditable="true"], .chat-input__textarea, button')) continue;
             const style = window.getComputedStyle(element);
             if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || !element.getClientRects().length) continue;
-            const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
+            const bannerScope = element.closest('[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [data-a-target*="followers-only"], [class*="chat-rules"], [class*="followers-only"], [role="alert"]') || element;
+            const text = extractFollowersMessage(bannerScope);
             if (!text || text.length > 900 || !patterns.some(pattern => pattern.test(text))) continue;
-            const bannerScope = element.closest('[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [class*="chat-rules"], [role="alert"]') || element;
             const controls = [];
             if (bannerScope.matches('button, [role="button"], a, [data-a-target*="follow"]')) controls.push(bannerScope);
             bannerScope.querySelectorAll('button, [role="button"], a, [data-a-target*="follow"]').forEach(control => controls.push(control));
@@ -696,10 +649,31 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                 const match = text.match(pattern);
                 if (match) { remaining = formatFollowersDuration(match[1]); if (remaining) break; }
             }
-            const allDurations = formatFollowersDuration(text);
-            const required = allDurations && !remaining ? allDurations : '';
-            const info = { text, remaining, required, notFollowing: followButton };
-            if (!best || text.length > best.text.length) best = info;
+            let required = '';
+            for (const pattern of requiredPatterns) {
+                const match = text.match(pattern);
+                if (match) { required = formatFollowersDuration(match[1]); if (required) break; }
+            }
+            if (!required && !remaining) {
+                const requiredMatch = text.match(/(?:фолловером|подписчиком)\s+(\d+\s*(?:days?|день|дня|дней|weeks?|недел(?:я|и|ю|ь|ей)?))/i);
+                if (requiredMatch) required = formatFollowersDuration(requiredMatch[1]);
+            }
+            const info = { text, remaining, required, notFollowing: followButton, channel: channelName };
+            if (remaining || required) {
+                followersOnlyCache.set(channelName, info);
+            }
+            const score = (remaining ? 10000 : 0) + (required ? 5000 : 0) + (followButton ? 1000 : 0) + Math.min(text.length, 500);
+            if (score > bestScore) { best = info; bestScore = score; }
+        }
+        if (!best) {
+            if (channelName) followersOnlyCache.delete(channelName);
+            return null;
+        }
+        if (best.notFollowing) return best;
+        if (!best.remaining && !best.required) {
+            const cached = followersOnlyCache.get(channelName);
+            if (cached && (cached.remaining || cached.required)) return { ...cached, text: cached.text, notFollowing: false };
+            if (channelName) requestFollowersBannerExpand(channelName, chatInput);
         }
         return best;
     }
@@ -1772,7 +1746,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                     else if (followersInfo.required) followersOnlyDetailEl.textContent = `Требуемый срок подписки: ${followersInfo.required}`;
                     else followersOnlyDetailEl.textContent = 'В чате действует ограничение для фолловеров.';
                     followersOnlySourceEl.textContent = followersInfo.text;
-                    followersOnlySourceEl.hidden = !followersInfo.text;
+                    followersOnlySourceEl.hidden = true;
                 }
             }
             const slowMode = getSlowModeInfo();
@@ -1803,6 +1777,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                 } else startBtn.disabled = false;
             }
         }
+        refreshFollowersOnlyStatus = updateChatStatusUI;
         setInterval(updateChatStatusUI, 1500);
         updateChatStatusUI();
         function scheduleNext(baseSec) {
@@ -1894,6 +1869,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                 }
             };
             chatInput.addEventListener('input', checkInputState);
+            chatInput.addEventListener('focusin', () => setTimeout(() => { if (refreshFollowersOnlyStatus) refreshFollowersOnlyStatus(); }, 120));
             chatInput.addEventListener('keydown', (e) => {
                 if (isAutoSending) return;
                 if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') setTimeout(checkInputState, 10);
@@ -1916,7 +1892,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         applySpoilerSettings();
         setupSpoilers();
         createAutoChatUI();
-        requestAnimationFrame(tick);
         let updateScheduled = false; let pendingPageRecords = [];
         const isInternalNode = node => {
             if (!node || node.nodeType !== 1) return false;
