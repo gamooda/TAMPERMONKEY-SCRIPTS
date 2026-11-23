@@ -938,8 +938,9 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     function getChatRestriction() {
         if (getPlatform() === 'kick') {
             const input = findChatInput();
-            const chatArea = input?.closest('.flex.grow.flex-col.gap-2') || input?.closest('.relative') || getChatList() || document.body;
-            const text = (chatArea?.innerText || document.body.innerText || '').toLowerCase();
+            const chatArea = input?.closest('.flex.grow.flex-col.gap-2') || input?.closest('.relative') || input?.parentElement?.parentElement || document.body;
+            const restrictionText = chatArea?.querySelector('div[class*="pointer-events-none"]')?.innerText || chatArea?.innerText || '';
+            const text = restrictionText.toLowerCase();
             if (/timed out from chat|you are timed out|временно отстранен/.test(text)) return { type: 'timeout', message: 'Вы временно отстранены от чата Kick' };
             if (/banned from chat|you are banned|заблокирован в чате/.test(text)) return { type: 'ban', message: 'Вы заблокированы в чате Kick' };
             if (input && (input.getAttribute('contenteditable') === 'false' || input.getAttribute('aria-disabled') === 'true')) {
@@ -1045,6 +1046,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         await new Promise(resolve => setTimeout(resolve, 100));
         if (!(input.textContent || '').trim()) document.execCommand('insertText', false, text);
         await new Promise(resolve => setTimeout(resolve, 50));
+        if (!(input.textContent || '').trim()) return { ok: false, restriction: { type: 'input', message: 'Не удалось вставить текст в поле Kick' } };
         const button = findSendButton();
         if (button && !button.disabled) {
             button.click();
