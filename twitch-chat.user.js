@@ -457,7 +457,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             ].join(',');
             document.querySelectorAll(selectors).forEach(node => {
                 if (node.closest('#tm-autochat-panel, #tm-preview-container, #tm-emote-picker-modal')) return;
-                const name = (node.getAttribute('alt') || node.getAttribute('data-emote-name') || node.getAttribute('title') || node.closest('[data-emote-name]')?.getAttribute('data-emote-name') || '').trim();
+                const name = (node.getAttribute('alt') || node.getAttribute('data-emote-name') || node.getAttribute('title') || node.closest('[data-emote-name]')?.getAttribute('data-emote-name') || node.closest('button')?.getAttribute('aria-label') || node.closest('button')?.getAttribute('title') || '').trim();
                 const img = node.matches('img') ? node : node.querySelector('img');
                 const src = img?.currentSrc || img?.src || img?.getAttribute('data-src') || node.getAttribute('data-src') || '';
                 if (!name || name.length > 48 || !src) return;
@@ -2203,7 +2203,10 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 : 'Откройте встроенный пикер Kick или дождитесь смайлов в чате.';
             if (emoteModal.classList.contains('open')) renderEmotePickerList(emoteSearch.value);
         });
-        document.addEventListener('tm-kick-chat-settings-updated', () => updateChatStatusUI());
+        document.addEventListener('tm-kick-chat-settings-updated', () => {
+            updateChatStatusUI();
+            if (currentTab === 'history') renderHistory();
+        });
         document.addEventListener('tm-7tv-emotes-loaded', event => {
             if (!event.detail || event.detail.channel !== getChannelInfo().name) return;
             if (event.detail.count === null) {
