@@ -52,12 +52,12 @@
         let localData = {};
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
-            if (raw) localData = normalizeStoredHistory(JSON.parse(raw), getPlatform());
+            if (raw) localData = normalizeStoredHistory(JSON.parse(raw), 'twitch');
         } catch {}
         if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function') {
             try {
                 let sharedData = GM_getValue(STORAGE_KEY, null);
-                if (sharedData && typeof sharedData === 'object' && !Array.isArray(sharedData)) sharedData = normalizeStoredHistory(sharedData, getPlatform());
+                if (sharedData && typeof sharedData === 'object' && !Array.isArray(sharedData)) sharedData = normalizeStoredHistory(sharedData, 'twitch');
                 if (!sharedData || typeof sharedData !== 'object' || Array.isArray(sharedData)) {
                     sharedData = localData;
                     GM_setValue(STORAGE_KEY, sharedData);
@@ -1668,7 +1668,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                         const d = loadData();
                         const currentHist = getHistory();
                         const normalized = imported.filter(h => h && Array.isArray(h.variants)).map(h => {
-                            const entry = { ...h, channel: h.channel ? { ...h.channel, platform: h.channel.platform === 'kick' ? 'kick' : (h.channel.platform === 'twitch' ? 'twitch' : getPlatform()) } : { platform: getPlatform(), name: 'unknown', displayName: 'Unknown' } };
+                            const entry = { ...h, channel: h.channel ? { ...h.channel, platform: h.channel.platform === 'kick' ? 'kick' : 'twitch' } : { platform: 'twitch', name: 'unknown', displayName: 'Unknown' } };
                             entry.pinnedIn = (entry.pinnedIn || []).map(pin => ['all', 'unknown', 'all-pastes'].includes(pin) || String(pin).includes(':') ? pin : entry.channel.platform + ':' + pin);
                             return entry;
                         });
