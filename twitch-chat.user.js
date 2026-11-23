@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      11.9
+// @version      12.0
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -319,7 +319,8 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
 .tm-ac-followers-icon { display: flex; flex: 0 0 20px; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: rgba(255,184,0,.16); color: #ffc85c; font-size: 12px; font-weight: 800; }
 .tm-ac-followers-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .tm-ac-followers-copy strong { color: #f2d99f; font-size: 12px; line-height: 1.35; }
-.tm-ac-followers-copy small { color: #b6a47e; font-size: 11px; line-height: 1.4; }
+.tm-ac-followers-copy small { color: #b6a47e; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.tm-ac-followers-copy #tm-ac-followers-source { color: #9d8c69; }
 @media (max-width: 560px) { #tm-edit-modal .tm-variant-tools { flex: 0 0 auto; flex-direction: row; width: auto; } #tm-edit-modal .tm-variant-tools .tm-edit-btn { flex: 0 0 auto; } #tm-edit-modal .tm-edit-textarea { width: 100%; min-height: 130px; height: 130px; } }
         `;
         document.head.appendChild(style);
@@ -682,16 +683,14 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
             if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || !element.getClientRects().length) continue;
             const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
             if (!text || text.length > 900 || !patterns.some(pattern => pattern.test(text))) continue;
-            let followButton = false; let current = element;
-            for (let depth = 0; current && depth < 4 && !followButton; depth++, current = current.parentElement) {
-                const controls = [];
-                if (current.matches('button, [role="button"], a, [data-a-target*="follow"]')) controls.push(current);
-                current.querySelectorAll('button, [role="button"], a, [data-a-target*="follow"]').forEach(control => controls.push(control));
-                followButton = controls.some(control => {
-                    const controlStyle = window.getComputedStyle(control);
-                    return controlStyle.display !== 'none' && controlStyle.visibility !== 'hidden' && control.getClientRects().length > 0 && isFollowButton(control);
-                });
-            }
+            const bannerScope = element.closest('[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [class*="chat-rules"], [role="alert"]') || element;
+            const controls = [];
+            if (bannerScope.matches('button, [role="button"], a, [data-a-target*="follow"]')) controls.push(bannerScope);
+            bannerScope.querySelectorAll('button, [role="button"], a, [data-a-target*="follow"]').forEach(control => controls.push(control));
+            const followButton = controls.some(control => {
+                const controlStyle = window.getComputedStyle(control);
+                return controlStyle.display !== 'none' && controlStyle.visibility !== 'hidden' && control.getClientRects().length > 0 && isFollowButton(control);
+            });
             let remaining = '';
             for (const pattern of remainingPatterns) {
                 const match = text.match(pattern);
@@ -701,7 +700,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
             const required = allDurations && !remaining ? allDurations : '';
             const info = { text, remaining, required, notFollowing: followButton };
             if (!best || text.length > best.text.length) best = info;
-            if (element.matches('[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [class*="chat-rules"]')) break;
         }
         return best;
     }
@@ -1767,13 +1765,14 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                 const followersInfo = getFollowersOnlyInfo();
                 followersOnlyStatusEl.hidden = !followersInfo;
                 if (followersInfo) {
+                    followersOnlySourceEl.hidden = true;
                     followersOnlyTitleEl.textContent = followersInfo.notFollowing ? 'Чат только для фолловеров' : 'Ограничение для фолловеров';
                     if (followersInfo.notFollowing) followersOnlyDetailEl.textContent = 'Чтобы отправлять сообщения, нажмите «Отслеживать» на канале.';
                     else if (followersInfo.remaining) followersOnlyDetailEl.textContent = `Ждать осталось: ${followersInfo.remaining}`;
                     else if (followersInfo.required) followersOnlyDetailEl.textContent = `Требуемый срок подписки: ${followersInfo.required}`;
                     else followersOnlyDetailEl.textContent = 'В чате действует ограничение для фолловеров.';
                     followersOnlySourceEl.textContent = followersInfo.text;
-                    followersOnlySourceEl.hidden = !followersInfo.text || followersInfo.notFollowing || !!followersInfo.remaining || !!followersInfo.required;
+                    followersOnlySourceEl.hidden = !followersInfo.text;
                 }
             }
             const slowMode = getSlowModeInfo();
