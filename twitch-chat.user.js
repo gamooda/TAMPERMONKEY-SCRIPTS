@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         StreamChat Assistant
 // @namespace    twitch-panels-telegram-spoiler
-// @version      13.0
+// @version      13.1
 // @description  Unified chat automation, message history and native emote picker for Twitch and Kick
+// @updateURL    https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/twitch-chat.user.js
+// @downloadURL  https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/twitch-chat.user.js
 // @icon         https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/streamchat-icon.svg
 // @match        https://www.twitch.tv/*
 // @match        https://kick.com/*
@@ -55,6 +57,7 @@
         if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function') {
             try {
                 let sharedData = GM_getValue(STORAGE_KEY, null);
+                if (sharedData && typeof sharedData === 'object' && !Array.isArray(sharedData)) sharedData = normalizeStoredHistory(sharedData, getPlatform());
                 if (!sharedData || typeof sharedData !== 'object' || Array.isArray(sharedData)) {
                     sharedData = localData;
                     GM_setValue(STORAGE_KEY, sharedData);
@@ -448,7 +451,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         if (getPlatform() === 'kick') {
             const selectors = [
                 'img[src*="files.kick.com/emotes/"]',
-                'img[src*="/emotes/"][alt]',
                 'img[data-emote-name]',
                 'span[data-emote-name]',
                 'img[alt][data-testid*="emote"]'
@@ -459,6 +461,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 const img = node.matches('img') ? node : node.querySelector('img');
                 const src = img?.currentSrc || img?.src || img?.getAttribute('data-src') || node.getAttribute('data-src') || '';
                 if (!name || name.length > 48 || !src) return;
+                try { if (new URL(src, location.href).hostname !== 'files.kick.com') return; } catch { return; }
                 if (!kickNativeEmoteNames.has(name)) {
                     kickNativeEmoteNames.add(name);
                     changed = true;
@@ -657,11 +660,13 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             twitchGlobalEmotePromise = null;
         }
     }
-    applyTwitchGlobalEmotes([
-        { name: 'Kreygasm', imageUrl: 'https://static-cdn.jtvnw.net/emoticons/v2/41/static/light/3.0' },
-        { name: 'RaccAttack', imageUrl: 'https://static-cdn.jtvnw.net/emoticons/v2/114870/static/light/3.0' }
-    ]);
-    loadTwitchGlobalEmotes();
+    if (getPlatform() === 'twitch') {
+        applyTwitchGlobalEmotes([
+            { name: 'Kreygasm', imageUrl: 'https://static-cdn.jtvnw.net/emoticons/v2/41/static/light/3.0' },
+            { name: 'RaccAttack', imageUrl: 'https://static-cdn.jtvnw.net/emoticons/v2/114870/static/light/3.0' }
+        ]);
+        loadTwitchGlobalEmotes();
+    }
     async function getTwitchUserId(login) {
         if (!login) return null;
         const encoded = encodeURIComponent(login.toLowerCase());
@@ -849,8 +854,9 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         const platform = getPlatform();
         const parts = window.location.pathname.split('/').filter(Boolean);
         const first = (parts[0] || '').toLowerCase();
+        const kickNonChannelRoutes = new Set(['', 'home', 'browse', 'following', 'categories', 'category', 'search', 'login', 'register', 'dashboard', 'settings', 'clips', 'videos', 'subscriptions', 'notifications', 'messages', 'wallet', 'terms-of-service', 'privacy-policy', 'cookie-policy', 'community-guidelines', 'dmca-policy']);
         const channelName = platform === 'kick'
-            ? (first === 'popout' ? (parts[1] || '') : (parts[0] || '')).toLowerCase()
+            ? (first === 'popout' ? (parts[1] || '') : (kickNonChannelRoutes.has(first) ? '' : (parts[0] || ''))).toLowerCase()
             : (['directory', 'popout', 'videos', 'settings'].includes(first) ? '' : first);
         let displayName = channelName;
         if (platform === 'twitch') {
@@ -936,7 +942,11 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             const text = (chatArea?.innerText || document.body.innerText || '').toLowerCase();
             if (/timed out from chat|you are timed out|временно отстранен/.test(text)) return { type: 'timeout', message: 'Вы временно отстранены от чата Kick' };
             if (/banned from chat|you are banned|заблокирован в чате/.test(text)) return { type: 'ban', message: 'Вы заблокированы в чате Kick' };
-            if (input?.getAttribute('contenteditable') === 'false' && /timed out|banned from chat/.test(text)) return { type: 'restricted', message: 'Отправка сообщений в чате Kick недоступна' };
+            if (input && (input.getAttribute('contenteditable') === 'false' || input.getAttribute('aria-disabled') === 'true')) {
+                if (kickChannelSettings.subscribersMode) return { type: 'subscribers', message: 'Для отправки сообщений требуется подписка на канал Kick' };
+                if (kickChannelSettings.followersMode) return { type: 'followers', message: 'Для отправки сообщений нужно подписаться на канал Kick' };
+                return { type: 'restricted', message: 'Поле ввода чата Kick отключено' };
+            }
             return null;
         }
         const chatArea = document.querySelector('.chat-input') || document.querySelector('[data-a-target="chat-input"]')?.closest('.chat-input') || document.querySelector('.chat-room') || document.body; const allText = (chatArea.innerText || '').toLowerCase();
@@ -1230,7 +1240,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         panel.innerHTML = `
             <div class="tm-ac-header">
                 <div class="tm-ac-header-left">
-                    <span class="tm-ac-header-title">AutoChat ${username ? '• ' + username : ''}</span>
+                    <span class="tm-ac-header-title">StreamChat Assistant ${username ? '• ' + username : ''}</span>
                 </div>
                 <div class="tm-ac-header-right">
                     <div class="tm-ac-status-pill slowmode" id="tm-ac-slowmode-pill" style="display:none">
