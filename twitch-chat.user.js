@@ -844,39 +844,99 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         return null;
     }
     function getChannelInfo() {
-        let channelName = ''; const parts = window.location.pathname.split('/').filter(Boolean);
-        if (parts.length > 0 && !['directory', 'popout', 'videos', 'settings'].includes(parts[0])) {
-            channelName = parts[0].toLowerCase();
+        const platform = getPlatform();
+        const parts = window.location.pathname.split('/').filter(Boolean);
+        const first = (parts[0] || '').toLowerCase();
+        const channelName = platform === 'kick'
+            ? (first === 'popout' ? (parts[1] || '') : (parts[0] || '')).toLowerCase()
+            : (['directory', 'popout', 'videos', 'settings'].includes(first) ? '' : first);
+        let displayName = channelName;
+        if (platform === 'twitch') {
+            const nameEl = document.querySelector('[data-a-target="channel-info"] h1, h1[data-test-selector="channel-header-title"], .channel-info-content h1');
+            if (nameEl && nameEl.textContent.trim()) displayName = nameEl.textContent.trim();
+        } else {
+            const nameEl = document.querySelector('[data-testid="channel-title"], [data-testid="channel-name"], h1');
+            if (nameEl && nameEl.textContent.trim() && nameEl.textContent.trim().length < 80) displayName = nameEl.textContent.trim().replace(/^@/, '');
+            else if (kickChannelSettings.slug === channelName && kickChannelSettings.username) displayName = kickChannelSettings.username;
         }
-        let displayName = channelName; const nameEl = document.querySelector('[data-a-target="channel-info"] h1, h1[data-test-selector="channel-header-title"], .channel-info-content h1');
-        if (nameEl && nameEl.textContent.trim()) {
-            displayName = nameEl.textContent.trim();
+        return { platform, name: channelName, displayName, avatar: getAvatarUrl(channelName, platform) };
+    }
+    function getAvatarUrl(name, platform = getPlatform()) {
+        if (!name || name === 'unknown' || name === 'all') return '';
+        const safeName = String(name).toLowerCase();
+        if (platform === 'kick') {
+            if (kickChannelSettings.slug === safeName && kickChannelSettings.avatar) return kickChannelSettings.avatar;
+            const link = document.querySelector('a[href="/' + safeName + '"], a[href="/' + safeName + '/"]');
+            const img = link?.querySelector('img');
+            return img?.src || '';
         }
-        return { name: channelName, displayName, avatar: getAvatarUrl(channelName) };
-    }
-    function getAvatarUrl(name) {
-        if (name && name !== 'unknown' && name !== 'all') {
-            const userEl = document.querySelector(`[data-a-user="${name.toLowerCase()}"]`);
-            if (userEl) {
-                const img = userEl.querySelector('img');
-                if (img && img.src) return img.src;
-            }
-            const sidebarLinks = document.querySelectorAll('a[href="/' + name + '"]');
-            for (let link of sidebarLinks) {
-                const img = link.querySelector('img');
-                if (img && img.src) return img.src;
-            }
-            return `https://unavatar.io/twitch/${encodeURIComponent(name)}`;
+        const userEl = document.querySelector(`[data-a-user="${safeName}"]`);
+        if (userEl) {
+            const img = userEl.querySelector('img');
+            if (img && img.src) return img.src;
         }
-        return 'https://static-cdn.jtvnw.net/user-default-pictures-uv/215b7342-def9-11e9-9a66-784f43822e80-profile_image-70x70.png';
+        const sidebarLinks = document.querySelectorAll('a[href="/' + safeName + '"]');
+        for (const link of sidebarLinks) {
+            const img = link.querySelector('img');
+            if (img && img.src) return img.src;
+        }
+        return `https://unavatar.io/twitch/${encodeURIComponent(safeName)}`;
     }
-    function renderAvatar(name, size = 16) {
-        const url = getAvatarUrl(name); const fallback = 'https://static-cdn.jtvnw.net/user-default-pictures-uv/215b7342-def9-11e9-9a66-784f43822e80-profile_image-70x70.png';
-        return `<img src="${url}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;" onerror="this.onerror=null;this.src='${fallback}';">`;
+    function renderAvatar(name, size = 16, platform = getPlatform()) {
+        const url = getAvatarUrl(name, platform);
+        const initials = escapeHtml((name || (platform === 'kick' ? 'K' : 'T')).slice(0, 1).toUpperCase());
+        const background = platform === 'kick' ? '#53fc18' : '#9147ff';
+        return url
+            ? `<img src="${escapeHtml(url)}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;" onerror="this.outerHTML='<span style=&quot;width:${size}px;height:${size}px;border-radius:50%;background:${background};color:#111;display:inline-flex;align-items:center;justify-content:center;font-size:${Math.max(9,Math.floor(size*.58))}px;font-weight:800;flex-shrink:0;&quot;>${initials}</span>';">`
+            : `<span style="width:${size}px;height:${size}px;border-radius:50%;background:${background};color:#111;display:inline-flex;align-items:center;justify-content:center;font-size:${Math.max(9,Math.floor(size*.58))}px;font-weight:800;flex-shrink:0;">${initials}</span>`;
     }
-    function findChatInput() { return document.querySelector('div[data-a-target="chat-input"]'); }
-    function findSendButton() { return document.querySelector('button[data-a-target="chat-send-button"]'); }
+    function findChatInput() {
+        if (getPlatform() === 'kick') {
+            return document.getElementById('chat-input') ||
+                document.querySelector('[data-testid="chat-input"]') ||
+                document.querySelector('.editor-input[contenteditable="true"], [data-chat-input][contenteditable="true"], [contenteditable="true"][placeholder]');
+        }
+        return document.querySelector('div[data-a-target="chat-input"]');
+    }
+    function findSendButton() {
+        return getPlatform() === 'kick'
+            ? document.getElementById('send-message-button')
+            : document.querySelector('button[data-a-target="chat-send-button"]');
+    }
+    let kickChannelSettings = { slug: '', username: '', avatar: '', followersMode: false, subscribersMode: false, slowMode: false, messageInterval: 0 };
+    let kickSettingsRequestId = 0;
+    async function loadKickChannelSettings(slug) {
+        if (!slug) return;
+        const requestId = ++kickSettingsRequestId;
+        kickChannelSettings = { slug, username: '', avatar: '', followersMode: false, subscribersMode: false, slowMode: false, messageInterval: 0 };
+        try {
+            const response = await fetch('/api/v2/channels/' + encodeURIComponent(slug), { credentials: 'include', cache: 'no-store' });
+            if (!response.ok) return;
+            const data = await response.json();
+            if (requestId !== kickSettingsRequestId || getPlatform() !== 'kick' || getChannelInfo().name !== slug) return;
+            const chatroom = data?.chatroom || {};
+            kickChannelSettings = {
+                slug,
+                username: String(data?.user?.username || slug),
+                avatar: String(data?.user?.profile_pic || ''),
+                followersMode: !!chatroom.followers_mode,
+                subscribersMode: !!chatroom.subscribers_mode,
+                slowMode: !!chatroom.slow_mode,
+                messageInterval: Math.max(0, Number(chatroom.message_interval) || 0)
+            };
+            document.dispatchEvent(new CustomEvent('tm-kick-chat-settings-updated'));
+        } catch {}
+    }
     function getChatRestriction() {
+        if (getPlatform() === 'kick') {
+            const input = findChatInput();
+            const chatArea = input?.closest('.flex.grow.flex-col.gap-2') || input?.closest('.relative') || getChatList() || document.body;
+            const text = (chatArea?.innerText || document.body.innerText || '').toLowerCase();
+            if (/timed out from chat|you are timed out|временно отстранен/.test(text)) return { type: 'timeout', message: 'Вы временно отстранены от чата Kick' };
+            if (/banned from chat|you are banned|заблокирован в чате/.test(text)) return { type: 'ban', message: 'Вы заблокированы в чате Kick' };
+            if (input?.getAttribute('contenteditable') === 'false' && /timed out|banned from chat/.test(text)) return { type: 'restricted', message: 'Отправка сообщений в чате Kick недоступна' };
+            return null;
+        }
         const chatArea = document.querySelector('.chat-input') || document.querySelector('[data-a-target="chat-input"]')?.closest('.chat-input') || document.querySelector('.chat-room') || document.body; const allText = (chatArea.innerText || '').toLowerCase();
         if (/временно отстранен|отстранены от чата|временно отстранить/.test(allText)) {
             const timeMatch = allText.match(/через\s+(\d+)\s*минут[уы]?\s*(\d+)?\s*секунд?/i) || allText.match(/через\s+(\d+)\s*секунд/i); let remaining = '';
@@ -890,6 +950,11 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         return null;
     }
     function getFollowersOnlyInfo() {
+        if (getPlatform() === 'kick') {
+            if (kickChannelSettings.subscribersMode) return 'subscribers';
+            if (kickChannelSettings.followersMode) return 'followers';
+            return false;
+        }
         const patterns = [
             /чат\s+только\s+для\s+(?:фолловеров|подписчиков)/i,
             /только\s+(?:фолловеры|подписчики)\b.{0,120}(?:чат|писать|отправлять сообщения|общаться)/i,
@@ -938,6 +1003,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         return false;
     }
     function getSlowModeInfo() {
+        if (getPlatform() === 'kick') return kickChannelSettings.slowMode ? kickChannelSettings.messageInterval : 0;
         const chatArea = document.querySelector('.chat-room') || document.querySelector('[data-test-selector="chat-room-component-layout"]') || document.body; const text = (chatArea.innerText || ''); const ruMatch = text.match(/медленный режим[^0-9]*(\d+)\s*секунд/i);
         if (ruMatch) return parseInt(ruMatch[1], 10);
         const enMatch = text.match(/slow mode[^0-9]*(\d+)\s*second/i);
@@ -946,6 +1012,35 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     }
     function cleanChatText(text) {
         return String(text || '').replace(/[\u200B\u200C\u2060\uFEFF]/g, '').replace(/\u200D{2,}$/g, '').trim();
+    }
+    function clearKickChatInput(input) {
+        input.focus();
+        document.execCommand('selectAll', false, null);
+        document.execCommand('delete', false, null);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+    }
+    async function sendKickChatMessage(input, text) {
+        clearKickChatInput(input);
+        const beforeInput = new InputEvent('beforeinput', {
+            inputType: 'insertText',
+            data: text,
+            bubbles: true,
+            cancelable: true,
+            composed: true
+        });
+        input.dispatchEvent(beforeInput);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (!(input.textContent || '').trim()) document.execCommand('insertText', false, text);
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const button = findSendButton();
+        if (button && !button.disabled) {
+            button.click();
+            return { ok: true };
+        }
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        return { ok: true };
     }
     function clearChatInput(input) {
         input.focus();
@@ -970,6 +1065,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         if (!input) return { ok: false, restriction: { type: 'noinput', message: 'Поле чата не найдено' } };
         const finalText = cleanChatText(text);
         if (!finalText) return { ok: false, restriction: { type: 'empty', message: 'Сообщение пустое после очистки скрытых символов' } };
+        if (getPlatform() === 'kick') return sendKickChatMessage(input, finalText);
         clearChatInput(input);
         const dt = new DataTransfer();
         dt.setData('text/plain', finalText);
@@ -1005,6 +1101,13 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     let isPausedByUser = false; let isAutoSending = false; let currentFilter = 'all'; let lastKnownChannel = '';
     let activeHistoryIdx = -1; let currentEmoteTarget = null;
     function getChatList() {
+        if (getPlatform() === 'kick') {
+            const input = findChatInput();
+            return document.querySelector('[data-testid="chatroom"], [data-testid="chat-room"], [data-chatroom]') ||
+                input?.closest('aside') ||
+                input?.parentElement?.parentElement?.parentElement ||
+                null;
+        }
         return document.querySelector('.seventv-chat-list') ||
                document.querySelector('[data-test-selector="chat-scrollable-area__message-container"]') ||
                document.querySelector('.chat-scrollable-area__message-container') ||
