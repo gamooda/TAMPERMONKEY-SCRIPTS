@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      12.5
+// @version      12.6
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -353,7 +353,10 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     const channelEmoteNames = new Set();
     const discoveredEmoteNames = new Set();
     const globalSevenTVEmotes = new Map();
+    const globalTwitchEmotes = new Map();
     let globalEmotesLoaded = false;
+    let twitchGlobalEmotesLoaded = false;
+    let twitchGlobalEmotePromise = null;
     let activeSevenTVChannel = '';
     let sevenTVRequestId = 0;
     let sevenTVRetryTimer = null;
@@ -423,6 +426,35 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         }
         return changed;
     }
+    function getGlobalEmote(name) {
+        return globalSevenTVEmotes.get(name) || globalTwitchEmotes.get(name) || null;
+    }
+    function applyTwitchGlobalEmotes(emotes) {
+        if (!Array.isArray(emotes)) return 0;
+        let changed = false;
+        for (const emote of emotes) {
+            if (!emote || typeof emote.name !== 'string' || !emote.name.trim() || emote.name.length > 40) continue;
+            const imageUrl = String(emote.imageUrl || '');
+            if (!/^https:\/\/static-cdn\.jtvnw\.net\/emoticons\/v2\//i.test(imageUrl)) continue;
+            const sizedUrl = size => imageUrl.replace(/\/(?:1|2|3|4)\.0(?:\?.*)?$/, '/' + size + '.0');
+            const data = {
+                src: sizedUrl(2),
+                srcset: sizedUrl(1) + ' 1x, ' + sizedUrl(2) + ' 2x, ' + sizedUrl(3) + ' 3x'
+            };
+            const name = emote.name.trim();
+            const previous = globalTwitchEmotes.get(name);
+            if (!previous || previous.src !== data.src) {
+                globalTwitchEmotes.set(name, data);
+                changed = true;
+            }
+            if (!channelEmoteNames.has(name) && !discoveredEmoteNames.has(name) && !emoteMap.has(name)) {
+                emoteMap.set(name, data);
+                changed = true;
+            }
+        }
+        if (changed) notifyEmotesUpdated();
+        return globalTwitchEmotes.size;
+    }
     function clearChannelSevenTVEmotes(channelLogin) {
         sevenTVRequestId++;
         if (sevenTVRetryTimer) clearTimeout(sevenTVRetryTimer);
@@ -430,13 +462,13 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         sevenTVRetryCount = 0;
         activeSevenTVChannel = channelLogin || '';
         channelEmoteNames.forEach(name => {
-            const globalEmote = globalSevenTVEmotes.get(name);
+            const globalEmote = getGlobalEmote(name);
             if (globalEmote) emoteMap.set(name, globalEmote);
             else if (!discoveredEmoteNames.has(name)) emoteMap.delete(name);
         });
         discoveredEmoteNames.forEach(name => {
             if (channelEmoteNames.has(name)) return;
-            const globalEmote = globalSevenTVEmotes.get(name);
+            const globalEmote = getGlobalEmote(name);
             if (globalEmote) emoteMap.set(name, globalEmote);
             else emoteMap.delete(name);
         });
@@ -446,7 +478,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     }
     function replaceChannelSevenTVEmotes(emotes) {
         channelEmoteNames.forEach(name => {
-            const globalEmote = globalSevenTVEmotes.get(name);
+            const globalEmote = getGlobalEmote(name);
             if (globalEmote) emoteMap.set(name, globalEmote);
             else emoteMap.delete(name);
         });
@@ -491,6 +523,29 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     async function requestSevenTVApi(path) {
         return requestWithRetry(sevenTVApiUrls(path), true, 6500);
     }
+    async function loadTwitchGlobalEmotes() {
+        if (twitchGlobalEmotesLoaded) return globalTwitchEmotes.size;
+        if (twitchGlobalEmotePromise) return twitchGlobalEmotePromise;
+        twitchGlobalEmotePromise = (async () => {
+            const data = await requestWithRetry(['https://api.limerino.com/public/twitch-emotes?view=current'], true, 8000);
+            if (data && Array.isArray(data.emotes)) {
+                const count = applyTwitchGlobalEmotes(data.emotes);
+                twitchGlobalEmotesLoaded = true;
+                return count;
+            }
+            return globalTwitchEmotes.size;
+        })();
+        try {
+            return await twitchGlobalEmotePromise;
+        } finally {
+            twitchGlobalEmotePromise = null;
+        }
+    }
+    applyTwitchGlobalEmotes([
+        { name: 'Kreygasm', imageUrl: 'https://static-cdn.jtvnw.net/emoticons/v2/41/static/light/3.0' },
+        { name: 'RaccAttack', imageUrl: 'https://static-cdn.jtvnw.net/emoticons/v2/114870/static/light/3.0' }
+    ]);
+    loadTwitchGlobalEmotes();
     async function getTwitchUserId(login) {
         if (!login) return null;
         const encoded = encodeURIComponent(login.toLowerCase());
@@ -1230,7 +1285,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         }
         function renderEmotePickerList(query) {
             emoteList.innerHTML = '';
-            const emotes = Array.from(emoteMap.entries()).filter(([name]) => channelEmoteNames.has(name) || discoveredEmoteNames.has(name) || globalSevenTVEmotes.has(name)); const filtered = emotes.filter(([name]) => name.toLowerCase().includes(query.toLowerCase()));
+            const emotes = Array.from(emoteMap.entries()).filter(([name]) => channelEmoteNames.has(name) || discoveredEmoteNames.has(name) || globalSevenTVEmotes.has(name) || globalTwitchEmotes.has(name)); const filtered = emotes.filter(([name]) => name.toLowerCase().includes(query.toLowerCase()));
             if (filtered.length === 0) {
                 emoteList.innerHTML = '<div style="color:#adadb8; font-size:13px; padding:20px; width:100%; text-align:center;">Смайлы не найдены</div>';
             } else {
