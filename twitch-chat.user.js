@@ -890,7 +890,21 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     }
     function findChatInput() {
         if (getPlatform() === 'kick') {
-            return findVisibleKickElement('#chat-input-wrapper [data-lexical-editor="true"], .editor-input[data-lexical-editor="true"], #chat-input, [data-testid="chat-input"], #chat-input-wrapper [contenteditable="true"], [contenteditable="true"][placeholder]');
+            const selectors = [
+                '.editor-input[data-lexical-editor="true"]',
+                '#chat-input-wrapper [data-lexical-editor="true"]',
+                '[data-testid="chat-input"][contenteditable="true"]',
+                '#chat-input[contenteditable="true"]',
+                '#chat-input-wrapper [contenteditable="true"]',
+                '[contenteditable="true"][placeholder]',
+                '#chat-input',
+                '[data-testid="chat-input"]'
+            ];
+            for (const selector of selectors) {
+                const input = findVisibleKickElement(selector);
+                if (input) return input;
+            }
+            return null;
         }
         return document.querySelector('div[data-a-target="chat-input"]');
     }
