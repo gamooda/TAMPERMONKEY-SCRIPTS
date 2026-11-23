@@ -781,12 +781,15 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             if (remainingRaw || required) {
                 const previous = followersOnlyCache.get(channelName);
                 const parsedSeconds = remainingRaw ? parseFollowersDurationSeconds(remainingRaw) : null;
-                const sameReading = previous && previous.remainingRaw === remainingRaw && previous.remainingCapturedAt;
+                const sameReading = parsedSeconds !== null && previous && previous.remainingRaw === remainingRaw && previous.remainingCapturedAt;
                 followersOnlyCache.set(channelName, {
+                    ...previous,
                     ...info,
-                    remainingRaw,
-                    remainingSeconds: parsedSeconds,
-                    remainingCapturedAt: parsedSeconds === null ? 0 : (sameReading ? previous.remainingCapturedAt : Date.now())
+                    remaining: remainingRaw ? remaining : (previous?.remaining || ''),
+                    required: required || previous?.required || '',
+                    remainingRaw: remainingRaw || previous?.remainingRaw || '',
+                    remainingSeconds: parsedSeconds !== null ? parsedSeconds : (previous?.remainingSeconds ?? null),
+                    remainingCapturedAt: parsedSeconds !== null ? (sameReading ? previous.remainingCapturedAt : Date.now()) : (previous?.remainingCapturedAt || 0)
                 });
             }
             const score = (remaining ? 10000 : 0) + (required ? 5000 : 0) + (followButton ? 1000 : 0) + Math.min(text.length, 500);
@@ -810,6 +813,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 const elapsed = Math.max(0, (Date.now() - cached.remainingCapturedAt) / 1000);
                 result.remaining = formatFollowersSeconds(cached.remainingSeconds - elapsed);
             }
+            if (!cached.remaining && collapsedBanner && !result.notFollowing) requestFollowersBannerExpand(channelName, chatInput, collapsedBanner);
             return result;
         }
         if (best?.notFollowing) return best;
