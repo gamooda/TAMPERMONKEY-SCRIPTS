@@ -1092,6 +1092,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true, cancelable: true, composed: true }));
         }
         await new Promise(resolve => setTimeout(resolve, 180));
+        if (!kickInputHasContent(input)) return { ok: false, restriction: { type: 'input', message: 'Kick не подтвердил ввод сообщения. Отправка отменена.' } };
         const button = findSendButton();
         if (!button) return { ok: false, restriction: { type: 'sendbutton', message: 'Кнопка отправки Kick не найдена. Проверьте, что чат открыт.' } };
         if (button.disabled || button.getAttribute('aria-disabled') === 'true') return { ok: false, restriction: { type: 'sendbutton', message: 'Кнопка отправки Kick сейчас отключена.' } };
