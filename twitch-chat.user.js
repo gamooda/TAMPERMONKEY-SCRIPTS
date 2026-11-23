@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         StreamChat Assistant
 // @namespace    twitch-panels-telegram-spoiler
-// @version      13.2
+// @version      13.3
 // @description  Unified chat automation, message history and native emote picker for Twitch and Kick
 // @updateURL    https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/twitch-chat.user.js
 // @downloadURL  https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/twitch-chat.user.js
@@ -891,27 +891,29 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     function findChatInput() {
         if (getPlatform() === 'kick') {
             const selectors = [
-                '.editor-input[data-lexical-editor="true"]',
-                '#chat-input-wrapper [data-lexical-editor="true"]',
-                '[data-testid="chat-input"][contenteditable="true"]',
                 '#chat-input[contenteditable="true"]',
+                '[data-testid="chat-input"][contenteditable="true"]',
                 '#chat-input-wrapper [contenteditable="true"]',
-                '[contenteditable="true"][placeholder]',
+                '.editor-input[contenteditable="true"]',
+                '[contenteditable="true"][data-lexical-editor="true"]',
+                '[contenteditable="true"][role="textbox"]',
                 '#chat-input',
                 '[data-testid="chat-input"]'
             ];
             for (const selector of selectors) {
                 const input = findVisibleKickElement(selector);
-                if (input) return input;
+                if (input && input.getAttribute('contenteditable') !== 'false' && input.getAttribute('aria-disabled') !== 'true') return input;
             }
             return null;
         }
         return document.querySelector('div[data-a-target="chat-input"]');
     }
     function findSendButton() {
-        return getPlatform() === 'kick'
-            ? findVisibleKickElement('#send-message-button')
-            : document.querySelector('button[data-a-target="chat-send-button"]');
+        if (getPlatform() === 'kick') {
+            const buttons = Array.from(document.querySelectorAll('button#send-message-button'));
+            return buttons.find(button => isKickElementVisible(button)) || null;
+        }
+        return document.querySelector('button[data-a-target="chat-send-button"]');
     }
     let kickChannelSettings = { slug: '', username: '', avatar: '', followersMode: false, subscribersMode: false, slowMode: false, messageInterval: 0 };
     let kickSettingsRequestId = 0;
@@ -1061,21 +1063,22 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         selection.addRange(range);
     }
     async function clearKickChatInput(input) {
-        selectKickInput(input);
+        input.focus({ preventScroll: true });
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(input);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        try { document.execCommand('selectAll', false, null); } catch {}
         try { document.execCommand('delete', false, null); } catch {}
-        await new Promise(resolve => setTimeout(resolve, 80));
-        if (kickInputHasContent(input)) {
-            selectKickInput(input);
-            try { document.execCommand('selectAll', false, null); } catch {}
-            try { document.execCommand('delete', false, null); } catch {}
-            input.dispatchEvent(new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true, composed: true }));
-            await new Promise(resolve => setTimeout(resolve, 100));
-        }
+        input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'deleteContentBackward', bubbles: true, cancelable: true, composed: true }));
+        input.dispatchEvent(new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true, composed: true }));
+        await new Promise(resolve => setTimeout(resolve, 120));
         return !kickInputHasContent(input);
     }
     async function sendKickChatMessage(input, text) {
         const cleared = await clearKickChatInput(input);
-        if (!cleared) return { ok: false, restriction: { type: 'input', message: 'Не удалось очистить поле Kick. Сообщение не отправлено.' } };
+        if (!cleared) return { ok: false, restriction: { type: 'input', message: 'Kick не очистил поле ввода. Сообщение не отправлено.' } };
         input.focus({ preventScroll: true });
         const selection = window.getSelection();
         const range = document.createRange();
@@ -1083,18 +1086,19 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         range.collapse(false);
         selection.removeAllRanges();
         selection.addRange(range);
-        try { document.execCommand('insertText', false, text); } catch {}
-        await new Promise(resolve => setTimeout(resolve, 150));
-        const actualText = getKickInputText(input);
-        const expectedText = String(text).replace(/\s+/g, ' ').trim();
-        if (!actualText || actualText !== expectedText) return { ok: false, restriction: { type: 'input', message: 'Kick не подтвердил вставку текста. Сообщение не отправлено.' } };
-        const button = findSendButton();
-        if (button && !button.disabled && isKickElementVisible(button)) {
-            button.click();
-            return { ok: true };
+        let inserted = false;
+        try { inserted = document.execCommand('insertText', false, text); } catch {}
+        if (!inserted) {
+            input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true, cancelable: true, composed: true }));
         }
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        await new Promise(resolve => setTimeout(resolve, 180));
+        const button = findSendButton();
+        if (!button) return { ok: false, restriction: { type: 'sendbutton', message: 'Кнопка отправки Kick не найдена. Проверьте, что чат открыт.' } };
+        if (button.disabled || button.getAttribute('aria-disabled') === 'true') return { ok: false, restriction: { type: 'sendbutton', message: 'Кнопка отправки Kick сейчас отключена.' } };
+        button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerType: 'mouse', isPrimary: true, button: 0 }));
+        button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window }));
+        button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0, buttons: 0, view: window }));
+        button.click();
         return { ok: true };
     }
     function clearChatInput(input) {
