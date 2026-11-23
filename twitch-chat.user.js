@@ -228,7 +228,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
 .tm-modal-btn.cancel:hover { background: #3a3a3d; }
 .tm-modal-btn.confirm { background: #e91916; color: #fff; }
 .tm-modal-btn.confirm:hover { background: #ff4d4d; }
-#tm-edit-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000000; display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: opacity 0.2s; }
+#tm-edit-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 2147483647; display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: opacity 0.2s; }
 #tm-edit-modal.open { opacity: 1; visibility: visible; }
 #tm-edit-modal .tm-edit-content { background: #18181b; border: 1px solid #2f2f35; border-radius: 12px; width: 800px; max-width: 90vw; height: 80vh; display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0,0,0,0.8); overflow: hidden; }
 #tm-edit-modal .tm-edit-header { padding: 16px 20px; border-bottom: 1px solid #2f2f35; background: #0e0e10; display: flex; justify-content: space-between; align-items: center; }
@@ -242,7 +242,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
 #tm-edit-modal .tm-edit-btn.save { background: #00a865; color: #fff; }
 #tm-edit-modal .tm-edit-btn.add { background: #2f2f35; color: #fff; }
 #tm-edit-modal .tm-edit-btn.cancel { background: #2f2f35; color: #adadb8; }
-#tm-emote-picker-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000001; display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: opacity 0.2s; }
+#tm-emote-picker-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2147483647; display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: opacity 0.2s; }
 #tm-emote-picker-modal.open { opacity: 1; visibility: visible; }
 #tm-emote-picker-modal .tm-ep-content { background: #18181b; border: 1px solid #2f2f35; border-radius: 12px; width: 500px; max-width: 90vw; height: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0,0,0,0.8); }
 #tm-emote-picker-modal .tm-ep-header { padding: 12px 16px; border-bottom: 1px solid #2f2f35; display: flex; gap: 10px; align-items: center; }
