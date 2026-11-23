@@ -589,21 +589,40 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             /(?:must|need to|required to) follow.{0,140}(?:chat|participat|send messages)/i
         ];
         const selectors = '[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [data-a-target*="followers-only"], [class*="chat-rules"], [class*="followers-only"], [role="alert"]';
-        const scopes = new Set();
-        const chatRoom = document.querySelector('section[data-test-selector="chat-room-component-layout"]') || document.querySelector('.chat-room');
+        const candidates = new Set(document.querySelectorAll(selectors));
         const chatInput = document.querySelector('[data-a-target="chat-input"]');
-        if (chatRoom) scopes.add(chatRoom);
         if (chatInput) {
-            const chatArea = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
-            if (chatArea) scopes.add(chatArea);
+            const area = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
+            if (area) {
+                candidates.add(area);
+                area.querySelectorAll(selectors + ', p, span, div, [data-a-target], [data-test-selector]').forEach(node => candidates.add(node));
+            }
+            let current = chatInput;
+            let depth = 0;
+            while (current && current.parentElement && depth++ < 8) {
+                let sibling = current.previousElementSibling;
+                let count = 0;
+                while (sibling && count++ < 3) {
+                    candidates.add(sibling);
+                    sibling.querySelectorAll(selectors + ', p, span, div, [data-a-target], [data-test-selector]').forEach(node => candidates.add(node));
+                    sibling = sibling.previousElementSibling;
+                }
+                sibling = current.nextElementSibling;
+                count = 0;
+                while (sibling && count++ < 2) {
+                    candidates.add(sibling);
+                    sibling.querySelectorAll(selectors + ', p, span, div, [data-a-target], [data-test-selector]').forEach(node => candidates.add(node));
+                    sibling = sibling.nextElementSibling;
+                }
+                current = current.parentElement;
+            }
         }
-        document.querySelectorAll(selectors).forEach(element => scopes.add(element));
-        for (const element of scopes) {
+        for (const element of candidates) {
             if (!element || !element.isConnected) continue;
             const style = window.getComputedStyle(element);
             if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || !element.getClientRects().length) continue;
             const text = (element.innerText || element.textContent || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
-            if (text && patterns.some(pattern => pattern.test(text))) return true;
+            if (text && text.length <= 900 && patterns.some(pattern => pattern.test(text))) return true;
         }
         return false;
     }
