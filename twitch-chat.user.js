@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      11.8
+// @version      11.9
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -52,11 +52,11 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
   50% { transform: scale(1.1) translate(0, -50%); opacity: 1; }
   100% { transform: scale(1) translate(0, -50%); }
 }
-#tm-autochat-toggle-btn { position: fixed; top: 50%; right: 0; transform: translate(0, -50%); width: 24px; height: 60px; background: #18181b; border: 1px solid #2f2f35; border-right: none; border-radius: 8px 0 0 8px; color: #efeff1; z-index: 10000; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; opacity: 0; visibility: hidden; pointer-events: none; transition: right 0s linear, transform 0.3s ease, background 0.2s; will-change: right, transform, opacity; }
+#tm-autochat-toggle-btn { position: fixed; top: 50%; right: 0; transform: translate(0, -50%); width: 24px; height: 60px; background: #18181b; border: 1px solid #2f2f35; border-right: none; border-radius: 8px 0 0 8px; color: #efeff1; z-index: 20; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; opacity: 0; visibility: hidden; pointer-events: none; transition: right 0s linear, transform 0.3s ease, background 0.2s; will-change: right, transform, opacity; }
 #tm-autochat-toggle-btn.visible { opacity: 1; visibility: visible; pointer-events: auto; animation: tm-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards, tm-pulse 1s ease-in-out 3 0.4s; }
 #tm-autochat-toggle-btn:hover { background: #2f2f35; }
 #tm-autochat-toggle-btn.open { transform: translate(-380px, -50%); animation: none; }
-#tm-autochat-panel { position: fixed; top: 50%; right: 0; width: 380px; height: 650px; max-height: 85vh; background: #18181b; border: 1px solid #2f2f35; border-radius: 12px 0 0 12px; z-index: 1; color: #efeff1; font-family: Inter, Roobert, "Helvetica Neue", Helvetica, Arial, sans-serif; box-shadow: -12px 0 40px rgba(0,0,0,.6); user-select: none; overflow: hidden; display: flex; flex-direction: column; transform: translate(100%, -50%); opacity: 0; visibility: hidden; pointer-events: none; transition: right 0s linear, transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.3s ease, visibility 0.3s ease; will-change: right, transform; }
+#tm-autochat-panel { position: fixed; top: 50%; right: 0; width: 380px; height: 650px; max-height: 85vh; background: #18181b; border: 1px solid #2f2f35; border-radius: 12px 0 0 12px; z-index: 20; color: #efeff1; font-family: Inter, Roobert, "Helvetica Neue", Helvetica, Arial, sans-serif; box-shadow: -12px 0 40px rgba(0,0,0,.6); user-select: none; overflow: hidden; display: flex; flex-direction: column; transform: translate(100%, -50%); opacity: 0; visibility: hidden; pointer-events: none; transition: right 0s linear, transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.3s ease, visibility 0.3s ease; will-change: right, transform; }
 #tm-autochat-panel.open { transform: translate(0, -50%); opacity: 1; visibility: visible; pointer-events: auto; }
 #tm-autochat-panel .tm-ac-header { padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; background: #0e0e10; border-bottom: 1px solid #2f2f35; gap: 10px; }
 .tm-ac-header-left { display: flex; align-items: center; gap: 10px; overflow: hidden; }
@@ -601,40 +601,109 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         if (/вы забанены|you are banned|banned from this channel/i.test(allText)) return { type: 'ban', message: 'Вы забанены в этом чате' };
         return null;
     }
+    function formatFollowersDuration(durationText) {
+        const units = /(\d+)\s*(weeks?|wks?|недел(?:я|и|ю|ь|ей)?|months?|mos?|месяц(?:а|ев)?|days?|день|дня|дней|hours?|hrs?|час(?:а|ов)?|minutes?|mins?|минут(?:а|ы)?|seconds?|secs?|секунд(?:а|ы)?)/gi;
+        const labels = {
+            week: ['неделя', 'недели', 'недель'],
+            month: ['месяц', 'месяца', 'месяцев'],
+            day: ['день', 'дня', 'дней'],
+            hour: ['час', 'часа', 'часов'],
+            minute: ['минута', 'минуты', 'минут'],
+            second: ['секунда', 'секунды', 'секунд']
+        };
+        const plural = (value, forms) => {
+            const n = value % 100; const last = value % 10;
+            return n >= 11 && n <= 14 ? forms[2] : last === 1 ? forms[0] : last >= 2 && last <= 4 ? forms[1] : forms[2];
+        };
+        const parts = [];
+        for (const match of durationText.matchAll(units)) {
+            const value = parseInt(match[1], 10); const unit = match[2].toLowerCase();
+            let key = '';
+            if (/week|wk|недел/.test(unit)) key = 'week';
+            else if (/month|mo|месяц/.test(unit)) key = 'month';
+            else if (/day|день|дня|дней/.test(unit)) key = 'day';
+            else if (/hour|hr|час/.test(unit)) key = 'hour';
+            else if (/minute|min|минут/.test(unit)) key = 'minute';
+            else if (/second|sec|секунд/.test(unit)) key = 'second';
+            if (key && value > 0) parts.push(`${value} ${plural(value, labels[key])}`);
+        }
+        return parts.join(' ');
+    }
     function getFollowersOnlyInfo() {
         const patterns = [
-            /чат\s+(?:доступен\s+)?только\s+для\s+(?:фолловеров|подписчиков)/i,
-            /только\s+(?:фолловеры|подписчики)\b.{0,120}(?:чат|писать|отправлять сообщения|общаться)/i,
-            /режим\s+только\s+для\s+(?:фолловеров|подписчиков)/i,
-            /(?:подпишитесь|подпишись)\s+на\s+(?:этот\s+)?канал.{0,120}(?:чат|сообщени|писать)/i,
+            /чат.{0,100}(?:только для фолловеров|только для подписчиков)/i,
+            /для общения в чате.{0,100}(?:нужно|необходимо|требуется).{0,60}(?:фолловер|подписчик)/i,
+            /(?:нужно|необходимо|требуется) быть (?:фолловером|подписчиком).{0,100}(?:чат|общаться|писать)?/i,
+            /только (?:фолловеры|подписчики)\b.{0,140}(?:чат|писать|отправлять сообщения|общаться)/i,
+            /режим только для (?:фолловеров|подписчиков)/i,
             /followers?[-\s]only(?:\s+chat)?/i,
-            /only\s+followers?\b.{0,140}\b(?:chat|send messages|speak|chatting)\b/i,
-            /follow\s+this\s+channel.{0,120}(?:chat|send messages|chatting)/i,
-            /you\s+must\s+follow.{0,120}(?:chat|send messages|chatting)/i
+            /(?:to chat|chatting|participate in chat).{0,120}(?:must|need to|required to) follow/i,
+            /(?:must|need to|required to) follow.{0,140}(?:chat|participat|send messages|for\s+\d)/i,
+            /you must be following.{0,140}(?:chat|participat|send messages|\d)/i,
+            /follow this channel.{0,140}(?:chat|send messages|chatting|\d)/i
         ];
-        const selectors = '[data-a-target="chat-rules-banner"], [data-a-target*="followers-only"], [data-test-selector*="chat-rules"], .chat-input__textarea, [role="alert"], [class*="chat-rules-banner"]';
+        const unit = '(?:weeks?|wks?|недел(?:я|и|ю|ь|ей)?|months?|mos?|месяц(?:а|ев)?|days?|день|дня|дней|hours?|hrs?|час(?:а|ов)?|minutes?|mins?|минут(?:а|ы)?|seconds?|secs?|секунд(?:а|ы)?)';
+        const sequence = `\\d+\\s*${unit}(?:\\s*(?:(?:,|and|и)\\s*)?\\d+\\s*${unit}){0,4}`;
+        const remainingPatterns = [
+            new RegExp(`(?:ждать|ожидать)\\s+осталось\\s*[:—-]?\\s*(${sequence})`, 'i'),
+            new RegExp(`осталось\\s*(?:ждать|ожидать)?\\s*[:—-]?\\s*(${sequence})`, 'i'),
+            new RegExp(`(?:remaining|left)\\s*[:—-]?\\s*(${sequence})`, 'i'),
+            new RegExp(`(${sequence})\\s*(?:осталось|осталось ждать|remaining|left)\\b`, 'i'),
+            new RegExp(`(?:wait|waiting)\\s+(?:for|another)?\\s*[:—-]?\\s*(${sequence})`, 'i'),
+            new RegExp(`(?:можно будет писать|сможете общаться|can chat|can send messages)\\s+(?:через|in)\\s*(${sequence})`, 'i')
+        ];
+        const selectors = '[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [data-a-target*="followers-only"], [class*="chat-rules"], [class*="followers-only"], [role="alert"], [class*="banner"], [class*="notice"]';
         const candidates = new Set(document.querySelectorAll(selectors));
         const chatInput = document.querySelector('div[data-a-target="chat-input"]') || document.querySelector('.chat-input__textarea');
+        let chatArea = null;
         if (chatInput) {
-            const area = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
-            if (area) {
-                area.querySelectorAll(selectors + ', [data-a-target], [class*="banner"], [class*="notice"], p, span').forEach(node => candidates.add(node));
+            chatArea = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
+            if (chatArea) {
+                candidates.add(chatArea);
+                chatArea.querySelectorAll(selectors + ', [data-a-target], p, span').forEach(node => candidates.add(node));
                 let current = chatInput;
-                while (current && current !== area) {
-                    if (current.previousElementSibling) candidates.add(current.previousElementSibling);
+                while (current && current !== chatArea) {
+                    if (current.previousElementSibling) {
+                        candidates.add(current.previousElementSibling);
+                        current.previousElementSibling.querySelectorAll(selectors + ', [data-a-target], p, span').forEach(node => candidates.add(node));
+                    }
                     current = current.parentElement;
                 }
             }
         }
+        const isFollowButton = element => {
+            const label = [element.innerText, element.textContent, element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('data-a-target')].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+            return /^(?:follow(?:\s+(?:this\s+)?channel)?|отслеживать|подписаться)(?:\s|$)/i.test(label);
+        };
+        let best = null;
         for (const element of candidates) {
-            if (!element || !element.isConnected || element.matches('textarea, input, [contenteditable="true"], .chat-input__textarea')) continue;
+            if (!element || !element.isConnected || element.matches('textarea, input, [contenteditable="true"], .chat-input__textarea, button')) continue;
             const style = window.getComputedStyle(element);
             if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || !element.getClientRects().length) continue;
             const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
-            if (!text || text.length > 500) continue;
-            if (patterns.some(pattern => pattern.test(text))) return text;
+            if (!text || text.length > 900 || !patterns.some(pattern => pattern.test(text))) continue;
+            let followButton = false; let current = element;
+            for (let depth = 0; current && depth < 4 && !followButton; depth++, current = current.parentElement) {
+                const controls = [];
+                if (current.matches('button, [role="button"], a, [data-a-target*="follow"]')) controls.push(current);
+                current.querySelectorAll('button, [role="button"], a, [data-a-target*="follow"]').forEach(control => controls.push(control));
+                followButton = controls.some(control => {
+                    const controlStyle = window.getComputedStyle(control);
+                    return controlStyle.display !== 'none' && controlStyle.visibility !== 'hidden' && control.getClientRects().length > 0 && isFollowButton(control);
+                });
+            }
+            let remaining = '';
+            for (const pattern of remainingPatterns) {
+                const match = text.match(pattern);
+                if (match) { remaining = formatFollowersDuration(match[1]); if (remaining) break; }
+            }
+            const allDurations = formatFollowersDuration(text);
+            const required = allDurations && !remaining ? allDurations : '';
+            const info = { text, remaining, required, notFollowing: followButton };
+            if (!best || text.length > best.text.length) best = info;
+            if (element.matches('[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [class*="chat-rules"]')) break;
         }
-        return '';
+        return best;
     }
     function getSlowModeInfo() {
         const chatArea = document.querySelector('.chat-room') || document.querySelector('[data-test-selector="chat-room-component-layout"]') || document.body; const text = (chatArea.innerText || ''); const ruMatch = text.match(/медленный режим[^0-9]*(\d+)\s*секунд/i);
@@ -851,7 +920,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
                     </div>
                     <div class="tm-ac-followers-status" id="tm-ac-followers-status" role="status" hidden>
                         <span class="tm-ac-followers-icon">!</span>
-                        <span class="tm-ac-followers-copy"><strong>Чат только для фолловеров</strong><small>Чтобы отправлять сообщения, подпишитесь на канал.</small></span>
+                        <span class="tm-ac-followers-copy"><strong id="tm-ac-followers-title">Чат только для фолловеров</strong><small id="tm-ac-followers-detail">Чтобы отправлять сообщения, подпишитесь на канал.</small><small id="tm-ac-followers-source" hidden></small></span>
                     </div>
                     <div class="tm-ac-run-status" id="tm-ac-run-status">
                         <span class="tm-ac-run-indicator"></span>
@@ -1029,7 +1098,11 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         toggleSidebarBtn.addEventListener('click', (e) => {
             if (!e.isTrusted) return;
             e.preventDefault(); e.stopPropagation();
-            if (!isChatCurrentlyVisible || panel.classList.contains('open')) return;
+            if (!isChatCurrentlyVisible) return;
+            if (panel.classList.contains('open')) {
+                closePanel();
+                return;
+            }
             panel.classList.add('open');
             toggleSidebarBtn.classList.add('open');
             toggleSidebarBtn.innerHTML = '▶';
@@ -1058,7 +1131,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
         const statusEl = panel.querySelector('#tm-ac-status'); const historyList = panel.querySelector('#tm-ac-history-list'); const charCount = panel.querySelector('#tm-ac-char-count'); const livePreviewCheck = panel.querySelector('#tm-ac-live-preview');
         const runStatusCard = panel.querySelector('#tm-ac-run-status'); const runStateEl = panel.querySelector('#tm-ac-run-state'); const runDetailEl = panel.querySelector('#tm-ac-run-detail'); const runValueEl = panel.querySelector('#tm-ac-run-value');
         const antispamCheck = panel.querySelector('#tm-ac-antispam'); const spoilerEnabledCheck = panel.querySelector('#tm-ac-spoiler-enabled'); const spoilerNeverCheck = panel.querySelector('#tm-ac-spoiler-never'); const spoilerNeverRow = panel.querySelector('#tm-ac-spoiler-never-row');
-        const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const followersOnlyStatusEl = panel.querySelector('#tm-ac-followers-status'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
+        const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const followersOnlyStatusEl = panel.querySelector('#tm-ac-followers-status'); const followersOnlyTitleEl = panel.querySelector('#tm-ac-followers-title'); const followersOnlyDetailEl = panel.querySelector('#tm-ac-followers-detail'); const followersOnlySourceEl = panel.querySelector('#tm-ac-followers-source'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
         const filterText = panel.querySelector('#tm-ac-history-filter-text'); const filterList = panel.querySelector('#tm-ac-history-filter-list'); const emoteSearch = emoteModal.querySelector('#tm-ep-search'); const emoteList = emoteModal.querySelector('#tm-ep-list');
         function openEmotePicker(targetTextarea) {
             currentEmoteTarget = targetTextarea;
@@ -1690,7 +1763,19 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-canvas { opacity: 1 
             if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
         }
         function updateChatStatusUI() {
-            if (followersOnlyStatusEl) followersOnlyStatusEl.hidden = !getFollowersOnlyInfo();
+            if (followersOnlyStatusEl) {
+                const followersInfo = getFollowersOnlyInfo();
+                followersOnlyStatusEl.hidden = !followersInfo;
+                if (followersInfo) {
+                    followersOnlyTitleEl.textContent = followersInfo.notFollowing ? 'Чат только для фолловеров' : 'Ограничение для фолловеров';
+                    if (followersInfo.notFollowing) followersOnlyDetailEl.textContent = 'Чтобы отправлять сообщения, нажмите «Отслеживать» на канале.';
+                    else if (followersInfo.remaining) followersOnlyDetailEl.textContent = `Ждать осталось: ${followersInfo.remaining}`;
+                    else if (followersInfo.required) followersOnlyDetailEl.textContent = `Требуемый срок подписки: ${followersInfo.required}`;
+                    else followersOnlyDetailEl.textContent = 'В чате действует ограничение для фолловеров.';
+                    followersOnlySourceEl.textContent = followersInfo.text;
+                    followersOnlySourceEl.hidden = !followersInfo.text || followersInfo.notFollowing || !!followersInfo.remaining || !!followersInfo.required;
+                }
+            }
             const slowMode = getSlowModeInfo();
             if (slowMode > 0) {
                 slowmodeText.textContent = slowMode;
