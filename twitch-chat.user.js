@@ -316,7 +316,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
 .tm-ac-followers-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .tm-ac-followers-copy strong { color: #f2d99f; font-size: 12px; line-height: 1.35; }
 .tm-ac-followers-copy small { color: #b6a47e; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
-.tm-ac-followers-copy #tm-ac-followers-source { color: #9d8c69; }
 @media (max-width: 560px) { #tm-edit-modal .tm-variant-tools { flex: 0 0 auto; flex-direction: row; width: auto; } #tm-edit-modal .tm-variant-tools .tm-edit-btn { flex: 0 0 auto; } #tm-edit-modal .tm-edit-textarea { width: 100%; min-height: 130px; height: 130px; } }
         `;
         document.head.appendChild(style);
@@ -465,12 +464,23 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         if (!isCurrentRequest()) return null;
         try {
             const twitchId = await getTwitchUserId(channelLogin);
-            if (!isCurrentRequest() || !twitchId) return null;
+            if (!isCurrentRequest()) return null;
+            if (!twitchId) {
+                document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', { detail: { channel: channelLogin, count: null } }));
+                return null;
+            }
             const response = await fetch('https://7tv.io/v3/users/twitch/' + encodeURIComponent(twitchId));
-            if (!response.ok) return null;
+            if (!isCurrentRequest()) return null;
+            if (!response.ok) {
+                document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', { detail: { channel: channelLogin, count: null } }));
+                return null;
+            }
             const data = await response.json();
             if (!isCurrentRequest()) return null;
-            if (!data || !data.emote_set || !Array.isArray(data.emote_set.emotes)) return null;
+            if (!data || !data.emote_set || !Array.isArray(data.emote_set.emotes)) {
+                document.dispatchEvent(new CustomEvent('tm-7tv-emotes-loaded', { detail: { channel: channelLogin, count: null } }));
+                return null;
+            }
             addSevenTVEmotes(data.emote_set.emotes, true);
             notifyEmotesUpdated();
             const count = channelEmoteNames.size;
