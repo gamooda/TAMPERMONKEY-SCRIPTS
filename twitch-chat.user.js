@@ -576,7 +576,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         if (!target || typeof target.focus !== 'function' || !target.getClientRects().length) return;
         followersFocusAttempts.add(channelName);
         try { target.focus({ preventScroll: true }); } catch { try { target.focus(); } catch {} }
-        if (document.activeElement !== target && target === chatInput && typeof target.click === 'function') target.click();
+        if (document.activeElement !== target && typeof target.click === 'function') target.click();
         [120, 350, 800, 1400].forEach(delay => setTimeout(() => { if (refreshFollowersOnlyStatus) refreshFollowersOnlyStatus(); }, delay));
     }
     function getFollowersOnlyInfo() {
