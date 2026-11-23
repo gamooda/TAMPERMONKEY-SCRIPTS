@@ -450,12 +450,14 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 'img[src*="files.kick.com/emotes/"]',
                 'img[src*="/emotes/"][alt]',
                 'img[data-emote-name]',
+                'span[data-emote-name]',
                 'img[alt][data-testid*="emote"]'
             ].join(',');
-            document.querySelectorAll(selectors).forEach(img => {
-                if (img.closest('#tm-autochat-panel, #tm-preview-container, #tm-emote-picker-modal')) return;
-                const name = (img.getAttribute('alt') || img.getAttribute('data-emote-name') || img.getAttribute('title') || img.closest('[data-emote-name]')?.getAttribute('data-emote-name') || '').trim();
-                const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
+            document.querySelectorAll(selectors).forEach(node => {
+                if (node.closest('#tm-autochat-panel, #tm-preview-container, #tm-emote-picker-modal')) return;
+                const name = (node.getAttribute('alt') || node.getAttribute('data-emote-name') || node.getAttribute('title') || node.closest('[data-emote-name]')?.getAttribute('data-emote-name') || '').trim();
+                const img = node.matches('img') ? node : node.querySelector('img');
+                const src = img?.currentSrc || img?.src || img?.getAttribute('data-src') || node.getAttribute('data-src') || '';
                 if (!name || name.length > 48 || !src) return;
                 if (!kickNativeEmoteNames.has(name)) {
                     kickNativeEmoteNames.add(name);
@@ -463,7 +465,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 }
                 const existing = emoteMap.get(name);
                 if (!existing || existing.src !== src) {
-                    emoteMap.set(name, { src, srcset: img.getAttribute('srcset') || '' });
+                    emoteMap.set(name, { src, srcset: img?.getAttribute('srcset') || '' });
                     changed = true;
                 }
             });
@@ -1304,10 +1306,16 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                         <div class="tm-ac-desc">Скрытые символы не добавляются к сообщениям и очищаются перед отправкой.</div>
                     </label>
 
-                    <div class="tm-ac-section-title">Смайлы 7TV</div>
-                    <div style="display:flex; flex-direction:column; gap:6px;">
-                        <button id="tm-ac-7tv-refresh" class="tm-ac-hist-btn" style="width:100%; padding:8px;">↻ Обновить смайлы 7TV канала</button>
-                        <small id="tm-ac-7tv-status" style="color:#adadb8; font-size:11px; line-height:1.4;">Смайлы загружаются автоматически при переходе на канал.</small>
+                    <div id="tm-ac-7tv-settings-block">
+                        <div class="tm-ac-section-title">Смайлы 7TV</div>
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                            <button id="tm-ac-7tv-refresh" class="tm-ac-hist-btn" style="width:100%; padding:8px;">↻ Обновить смайлы 7TV канала</button>
+                            <small id="tm-ac-7tv-status" style="color:#adadb8; font-size:11px; line-height:1.4;">Смайлы загружаются автоматически при переходе на канал.</small>
+                        </div>
+                    </div>
+                    <div id="tm-ac-kick-emotes-info" hidden>
+                        <div class="tm-ac-section-title">Нативные смайлы Kick</div>
+                        <small id="tm-ac-kick-emotes-status" style="color:#adadb8; font-size:11px; line-height:1.4;">Смайлы автоматически добавляются из чата и встроенного пикера Kick.</small>
                     </div>
 
                     <div class="tm-ac-section-title">Описание (баннеры)</div>
@@ -1491,10 +1499,11 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         const statusEl = panel.querySelector('#tm-ac-status'); const historyList = panel.querySelector('#tm-ac-history-list'); const charCount = panel.querySelector('#tm-ac-char-count'); const livePreviewCheck = panel.querySelector('#tm-ac-live-preview');
         const runStatusCard = panel.querySelector('#tm-ac-run-status'); const runStateEl = panel.querySelector('#tm-ac-run-state'); const runDetailEl = panel.querySelector('#tm-ac-run-detail'); const runValueEl = panel.querySelector('#tm-ac-run-value');
         const spoilerEnabledCheck = panel.querySelector('#tm-ac-spoiler-enabled'); const spoilerNeverCheck = panel.querySelector('#tm-ac-spoiler-never'); const spoilerNeverRow = panel.querySelector('#tm-ac-spoiler-never-row');
-        const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const followersOnlyStatusEl = panel.querySelector('#tm-ac-followers-status'); const followersOnlyTitleEl = panel.querySelector('#tm-ac-followers-title'); const followersOnlyDetailEl = panel.querySelector('#tm-ac-followers-detail'); const sevenTVRefreshBtn = panel.querySelector('#tm-ac-7tv-refresh'); const sevenTVRefreshStatus = panel.querySelector('#tm-ac-7tv-status'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
+        const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const followersOnlyStatusEl = panel.querySelector('#tm-ac-followers-status'); const followersOnlyTitleEl = panel.querySelector('#tm-ac-followers-title'); const followersOnlyDetailEl = panel.querySelector('#tm-ac-followers-detail'); const sevenTVRefreshBtn = panel.querySelector('#tm-ac-7tv-refresh'); const sevenTVRefreshStatus = panel.querySelector('#tm-ac-7tv-status'); const sevenTVSettingsBlock = panel.querySelector('#tm-ac-7tv-settings-block'); const kickEmotesInfo = panel.querySelector('#tm-ac-kick-emotes-info'); const kickEmotesStatus = panel.querySelector('#tm-ac-kick-emotes-status'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
         const filterText = panel.querySelector('#tm-ac-history-filter-text'); const filterList = panel.querySelector('#tm-ac-history-filter-list'); const emoteSearch = emoteModal.querySelector('#tm-ep-search'); const emoteList = emoteModal.querySelector('#tm-ep-list'); const clearHistoryBtn = panel.querySelector('#tm-ac-clear-history'); const clearHistoryStatus = panel.querySelector('#tm-ac-clear-history-status');
         function openEmotePicker(targetTextarea) {
             currentEmoteTarget = targetTextarea;
+            if (getPlatform() === 'kick') collectEmotes();
             emoteModal.classList.add('open');
             emoteSearch.value = '';
             renderEmotePickerList('');
@@ -1502,9 +1511,12 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         }
         function renderEmotePickerList(query) {
             emoteList.innerHTML = '';
-            const emotes = Array.from(emoteMap.entries()).filter(([name]) => channelEmoteNames.has(name) || discoveredEmoteNames.has(name) || globalSevenTVEmotes.has(name) || globalTwitchEmotes.has(name)); const filtered = emotes.filter(([name]) => name.toLowerCase().includes(query.toLowerCase()));
+            const emotes = getPlatform() === 'kick'
+                ? Array.from(emoteMap.entries()).filter(([name]) => kickNativeEmoteNames.has(name))
+                : Array.from(emoteMap.entries()).filter(([name]) => channelEmoteNames.has(name) || discoveredEmoteNames.has(name) || globalSevenTVEmotes.has(name) || globalTwitchEmotes.has(name));
+            const filtered = emotes.filter(([name]) => name.toLowerCase().includes(query.toLowerCase()));
             if (filtered.length === 0) {
-                emoteList.innerHTML = '<div style="color:#adadb8; font-size:13px; padding:20px; width:100%; text-align:center;">Смайлы не найдены</div>';
+                emoteList.innerHTML = '<div style="color:#adadb8; font-size:13px; padding:20px; width:100%; text-align:center;">' + (getPlatform() === 'kick' ? 'Откройте встроенный пикер Kick или дождитесь появления смайлов в чате.' : 'Смайлы не найдены') + '</div>';
             } else {
                 filtered.forEach(([name, data]) => {
                     const img = document.createElement('img');
@@ -1614,8 +1626,21 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 try {
                     const imported = JSON.parse(ev.target.result);
                     if (Array.isArray(imported)) {
-                        const d = loadData(); const currentHist = getHistory(); const newHist = [...imported, ...currentHist.filter(h => !imported.some(i => i.variants[0] === h.variants[0]))];
-                        d.history = newHist;
+                        const d = loadData();
+                        const currentHist = getHistory();
+                        const normalized = imported.filter(h => h && Array.isArray(h.variants)).map(h => {
+                            const entry = { ...h, channel: h.channel ? { ...h.channel, platform: h.channel.platform === 'kick' ? 'kick' : (h.channel.platform === 'twitch' ? 'twitch' : getPlatform()) } : { platform: getPlatform(), name: 'unknown', displayName: 'Unknown' } };
+                            entry.pinnedIn = (entry.pinnedIn || []).map(pin => ['all', 'unknown', 'all-pastes'].includes(pin) || String(pin).includes(':') ? pin : entry.channel.platform + ':' + pin);
+                            return entry;
+                        });
+                        const seen = new Set(currentHist.map(getHistoryIdentity));
+                        const additions = normalized.filter(entry => {
+                            const identity = getHistoryIdentity(entry);
+                            if (seen.has(identity)) return false;
+                            seen.add(identity);
+                            return true;
+                        });
+                        d.history = [...additions, ...currentHist];
                         saveData(d);
                         renderHistory();
                         alert('Успешно импортировано!');
@@ -1712,7 +1737,8 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         }
         function addToHistory(variants) {
             if (!variants || variants.length === 0 || !variants[0].trim()) return;
-            let hist = getHistory(); const ch = getChannelInfo(); const mainText = variants[0]; const existingIdx = hist.findIndex(h => h.variants[0] === mainText && (!h.channel || h.channel.name === ch.name));
+            let hist = getHistory(); const ch = getChannelInfo(); const mainText = variants[0];
+            const existingIdx = hist.findIndex(h => h.variants[0] === mainText && h.channel?.name === ch.name && (h.channel?.platform || 'twitch') === ch.platform);
             if (existingIdx !== -1) hist.splice(existingIdx, 1);
             hist.unshift({ variants, pinnedIn: [], chars: mainText.length, channel: ch });
             const d = loadData();
@@ -1833,26 +1859,28 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             });
             const uniqueChannels = new Map();
             hist.forEach(h => {
-                if (h.channel && h.channel.name) {
-                    if (h.channel.name === 'all') uniqueChannels.set('all', { name: 'all', displayName: 'Везде', avatar: '' });
-                    else if (h.channel.name !== 'unknown') uniqueChannels.set(h.channel.name, h.channel);
-                }
+                if (!h.channel || !h.channel.name || h.channel.name === 'unknown') return;
+                const platform = h.channel.platform === 'kick' ? 'kick' : 'twitch';
+                if (h.channel.name === 'all') uniqueChannels.set('all', { ...h.channel, platform, name: 'all' });
+                else uniqueChannels.set(getHistoryChannelKey(h.channel), { ...h.channel, platform });
             });
-            let optionsHtml = `<div class="tm-ac-hist-filter-item ${currentFilter === 'all' ? 'selected' : ''}" data-val="all">${renderAvatar('', 20)} Все стримеры</div>`; const hasUnknown = hist.some(h => !h.channel || !h.channel.name || h.channel.name === 'unknown');
+            let optionsHtml = `<div class="tm-ac-hist-filter-item ${currentFilter === 'all' ? 'selected' : ''}" data-val="all">${renderAvatar('', 20)} Все платформы</div>`;
+            const hasUnknown = hist.some(h => !h.channel || !h.channel.name || h.channel.name === 'unknown');
             if (hasUnknown) optionsHtml += `<div class="tm-ac-hist-filter-item ${currentFilter === 'unknown' ? 'selected' : ''}" data-val="unknown">${renderAvatar('', 20)} Неизвестные</div>`;
             const hasAll = hist.some(h => h.channel && h.channel.name === 'all');
             if (hasAll) optionsHtml += `<div class="tm-ac-hist-filter-item ${currentFilter === 'all-pastes' ? 'selected' : ''}" data-val="all-pastes">${renderAvatar('', 20)} Везде</div>`;
-            Array.from(uniqueChannels.values()).sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name)).forEach(ch => {
+            Array.from(uniqueChannels.entries()).sort((a, b) => (a[1].displayName || a[1].name).localeCompare(b[1].displayName || b[1].name)).forEach(([key, ch]) => {
                 if (ch.name === 'all') return;
-                optionsHtml += `<div class="tm-ac-hist-filter-item ${currentFilter === ch.name ? 'selected' : ''}" data-val="${escapeHtml(ch.name)}">${renderAvatar(ch.name, 20)} ${escapeHtml(ch.displayName || ch.name)}</div>`;
+                const platform = ch.platform || 'twitch';
+                optionsHtml += `<div class="tm-ac-hist-filter-item ${currentFilter === key ? 'selected' : ''}" data-val="${escapeHtml(key)}">${renderAvatar(ch.name, 20, platform)} <span>${getPlatformLabel(platform)} · ${escapeHtml(ch.displayName || ch.name)}</span></div>`;
             });
             filterList.innerHTML = optionsHtml;
-            if (currentFilter === 'all') filterText.textContent = 'Все стримеры';
+            if (currentFilter === 'all') filterText.textContent = 'Все платформы';
             else if (currentFilter === 'unknown') filterText.textContent = 'Неизвестные';
             else if (currentFilter === 'all-pastes') filterText.textContent = 'Везде';
             else {
                 const ch = uniqueChannels.get(currentFilter);
-                filterText.textContent = ch ? (ch.displayName || ch.name) : 'Все стримеры';
+                filterText.textContent = ch ? getPlatformLabel(ch.platform || 'twitch') + ' · ' + (ch.displayName || ch.name) : 'Все платформы';
             }
             filterList.querySelectorAll('.tm-ac-hist-filter-item').forEach(item => {
                 item.addEventListener('click', (e) => {
@@ -1865,22 +1893,29 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             let filteredHist = indexedHist;
             if (currentFilter === 'unknown') filteredHist = indexedHist.filter(h => !h.channel || !h.channel.name || h.channel.name === 'unknown');
             else if (currentFilter === 'all-pastes') filteredHist = indexedHist.filter(h => h.channel && h.channel.name === 'all');
-            else if (currentFilter !== 'all') filteredHist = indexedHist.filter(h => h.channel && h.channel.name === currentFilter);
+            else if (currentFilter !== 'all') filteredHist = indexedHist.filter(h => h.channel && getHistoryChannelKey(h.channel) === currentFilter);
             if (filteredHist.length === 0) {
                 historyList.innerHTML = `<div class="tm-ac-hist-empty">Нет паст для этого выбора</div>`;
                 return;
             }
             historyList.innerHTML = filteredHist.map((h) => {
-                const originalIdx = h.originalIdx; const ch = h.channel || { name: "unknown", displayName: "Unknown" }; const isUnknown = (!ch.name || ch.name === "unknown"); const isAll = ch.name === "all";
-                const displayName = isUnknown ? "Unknown (нажмите чтобы изменить)" : (isAll ? "Везде" : (ch.displayName || ch.name)); const isPinned = (h.pinnedIn || []).includes(currentFilter); const mainText = h.variants[0] || "";
+                const originalIdx = h.originalIdx;
+                const ch = h.channel || { name: "unknown", displayName: "Unknown", platform: "twitch" };
+                const platform = ch.platform === 'kick' ? 'kick' : 'twitch';
+                const isUnknown = (!ch.name || ch.name === "unknown");
+                const isAll = ch.name === "all";
+                const displayName = isUnknown ? "Unknown (нажмите чтобы изменить)" : (isAll ? "Везде" : (ch.displayName || ch.name));
+                const isPinned = (h.pinnedIn || []).includes(currentFilter);
+                const mainText = h.variants[0] || "";
                 const variantCount = h.variants.length;
                 const variantLabel = variantCount % 10 === 1 && variantCount % 100 !== 11 ? "вариант" : variantCount % 10 >= 2 && variantCount % 10 <= 4 && (variantCount % 100 < 12 || variantCount % 100 > 14) ? "варианта" : "вариантов";
                 return `
                     <div class="tm-ac-hist-item ${isPinned ? "pinned" : ""}" data-idx="${originalIdx}" draggable="true">
                         <div class="tm-ac-hist-topline">
                             <div class="tm-ac-hist-channel">
-                                ${renderAvatar(ch.name, 16)}
+                                ${renderAvatar(ch.name, 16, platform)}
                                 <span>${escapeHtml(displayName)}</span>
+                                <span style="font-size:9px;font-weight:800;letter-spacing:.45px;padding:2px 5px;border-radius:4px;background:${platform === 'kick' ? 'rgba(83,252,24,.14)' : 'rgba(145,71,255,.18)'};color:${platform === 'kick' ? '#8bff62' : '#bf94ff'};">${getPlatformLabel(platform)}</span>
                             </div>
                             ${variantCount > 1 ? `<span class="tm-ac-variant-badge">${variantCount} ${variantLabel}</span>` : ""}
                         </div>
@@ -1960,8 +1995,9 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                             let val = (forcedValue || input.value).trim().toLowerCase();
                             if (val) {
                                 const histNow = getHistory();
-                                if (val === 'all' || val === 'везде') histNow[idx].channel = { name: 'all', displayName: 'Везде', avatar: '' };
-                                else histNow[idx].channel = { name: val, displayName: val, avatar: getAvatarUrl(val) };
+                                const platform = histNow[idx].channel?.platform === 'kick' ? 'kick' : 'twitch';
+                                if (val === 'all' || val === 'везде') histNow[idx].channel = { platform, name: 'all', displayName: 'Везде', avatar: '' };
+                                else histNow[idx].channel = { platform, name: val, displayName: val, avatar: getAvatarUrl(val, platform) };
                                 const d = loadData();
                                 d.history = histNow;
                                 saveData(d);
@@ -1971,13 +2007,13 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                             }
                         };
                         input.addEventListener('input', () => {
-                            const q = input.value.trim().toLowerCase(); let html = `<div class="tm-ac-autocomplete-item" data-name="all">${renderAvatar('', 16)} <span>Везде</span></div>`;
+                            const q = input.value.trim().toLowerCase(); const platform = getHistory()[idx]?.channel?.platform === 'kick' ? 'kick' : 'twitch'; let html = `<div class="tm-ac-autocomplete-item" data-name="all">${renderAvatar('', 16, platform)} <span>Везде</span></div>`;
                             if (q) {
-                                const matches = Array.from(uniqueChannels.values()).filter(c => c.name.includes(q) || (c.displayName && c.displayName.toLowerCase().includes(q)));
+                                const matches = Array.from(uniqueChannels.values()).filter(c => (c.platform || 'twitch') === platform && (c.name.includes(q) || (c.displayName && c.displayName.toLowerCase().includes(q))));
                                 if (matches.length > 0) {
                                     html += matches.map(c => `
                                         <div class="tm-ac-autocomplete-item" data-name="${escapeHtml(c.name)}">
-                                            ${renderAvatar(c.name, 16)}
+                                            ${renderAvatar(c.name, 16, platform)}
                                             <span>${escapeHtml(c.displayName || c.name)}</span>
                                         </div>
                                     `).join('');
@@ -2121,6 +2157,14 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             if (currentTab === 'history') renderHistory();
             if (emoteModal.classList.contains('open')) renderEmotePickerList(emoteSearch.value);
         });
+        document.addEventListener('tm-kick-emotes-updated', event => {
+            if (getPlatform() !== 'kick') return;
+            if (kickEmotesStatus) kickEmotesStatus.textContent = event.detail?.count
+                ? 'В списке доступно ' + event.detail.count + ' смайлов Kick.'
+                : 'Откройте встроенный пикер Kick или дождитесь смайлов в чате.';
+            if (emoteModal.classList.contains('open')) renderEmotePickerList(emoteSearch.value);
+        });
+        document.addEventListener('tm-kick-chat-settings-updated', () => updateChatStatusUI());
         document.addEventListener('tm-7tv-emotes-loaded', event => {
             if (!event.detail || event.detail.channel !== getChannelInfo().name) return;
             if (event.detail.count === null) {
