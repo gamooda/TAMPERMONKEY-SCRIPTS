@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         StreamChat Assistant
 // @namespace    twitch-panels-telegram-spoiler
-// @version      13.1
+// @version      13.2
 // @description  Unified chat automation, message history and native emote picker for Twitch and Kick
 // @updateURL    https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/twitch-chat.user.js
 // @downloadURL  https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/twitch-chat.user.js
-// @icon         https://raw.githubusercontent.com/gamooda/TAMPERMONKEY-SCRIPTS/main/streamchat-icon.svg
+// @icon         https://static.twitchcdn.net/assets/favicon-32-e29e246c157142c94346.png
 // @match        https://www.twitch.tv/*
 // @match        https://kick.com/*
 // @match        https://www.kick.com/*
@@ -101,7 +101,7 @@
     function getSettings() {
         const d = loadData();
         return {
-            livePreview: d.livePreview !== false,
+            cleanHiddenChars: d.cleanHiddenChars !== false,
             spoilerEnabled: d.spoilerEnabled !== false,
             spoilerNeverReveal: !!d.spoilerNeverReveal
         };
@@ -128,11 +128,11 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
   50% { transform: scale(1.1) translate(0, -50%); opacity: 1; }
   100% { transform: scale(1) translate(0, -50%); }
 }
-#tm-autochat-toggle-btn { position: fixed; top: 50%; right: 0; transform: translate(0, -50%); width: 24px; height: 60px; background: #18181b; border: 1px solid #2f2f35; border-right: none; border-radius: 8px 0 0 8px; color: #efeff1; z-index: 20; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; opacity: 0; visibility: hidden; pointer-events: none; transition: right 0s linear, transform 0.3s ease, background 0.2s; will-change: right, transform, opacity; }
+#tm-autochat-toggle-btn { position: fixed !important; top: 50%; right: 0; transform: translate(0, -50%); width: 24px; height: 60px; background: #18181b; border: 1px solid #2f2f35; border-right: none; border-radius: 8px 0 0 8px; color: #efeff1; z-index: 2147483647 !important; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; opacity: 0; visibility: hidden; pointer-events: none; transition: right 0s linear, transform 0.3s ease, background 0.2s; will-change: right, transform, opacity; }
 #tm-autochat-toggle-btn.visible { opacity: 1; visibility: visible; pointer-events: auto; animation: tm-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards, tm-pulse 1s ease-in-out 3 0.4s; }
 #tm-autochat-toggle-btn:hover { background: #2f2f35; }
 #tm-autochat-toggle-btn.open { transform: translate(-380px, -50%); animation: none; }
-#tm-autochat-panel { position: fixed; top: 50%; right: 0; width: 380px; height: 650px; max-height: 85vh; background: #18181b; border: 1px solid #2f2f35; border-radius: 12px 0 0 12px; z-index: 20; color: #efeff1; font-family: Inter, Roobert, "Helvetica Neue", Helvetica, Arial, sans-serif; box-shadow: -12px 0 40px rgba(0,0,0,.6); user-select: none; overflow: hidden; display: flex; flex-direction: column; transform: translate(100%, -50%); opacity: 0; visibility: hidden; pointer-events: none; transition: right 0s linear, transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.3s ease, visibility 0.3s ease; will-change: right, transform; }
+#tm-autochat-panel { position: fixed !important; top: 50%; right: 0; width: 380px; height: 650px; max-height: 85vh; background: #18181b; border: 1px solid #2f2f35; border-radius: 12px 0 0 12px; z-index: 2147483646 !important; isolation: isolate; color: #efeff1; font-family: Inter, Roobert, "Helvetica Neue", Helvetica, Arial, sans-serif; box-shadow: -12px 0 40px rgba(0,0,0,.6); user-select: none; overflow: hidden; display: flex; flex-direction: column; transform: translate(100%, -50%); opacity: 0; visibility: hidden; pointer-events: none; transition: right 0s linear, transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.3s ease, visibility 0.3s ease; will-change: right, transform; }
 #tm-autochat-panel.open { transform: translate(0, -50%); opacity: 1; visibility: visible; pointer-events: auto; }
 #tm-autochat-panel .tm-ac-header { padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; background: #0e0e10; border-bottom: 1px solid #2f2f35; gap: 10px; }
 .tm-ac-header-left { display: flex; align-items: center; gap: 10px; overflow: hidden; }
@@ -212,21 +212,11 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
 .tm-ac-hist-btn.delete:hover { background: #e91916; }
 .tm-ac-hist-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .tm-ac-hist-empty { text-align: center; padding: 30px 10px; color: #6b6b70; font-size: 13px; }
-#tm-preview-container { display: flex; flex-direction: column; padding: 4px 10px; width: 100%; }
-.tm-preview-msg { position: relative; margin: 2px 0; padding: 8px 28px 8px 10px; background: #18181b; border-left: 3px solid #9147ff; border-radius: 4px; font-size: 13px; line-height: 1.45; color: #efeff1; animation: tmPreviewIn 0.2s ease; box-shadow: 0 2px 10px rgba(0,0,0,0.5); word-break: break-word; }
-.tm-preview-msg.tm-live-preview { border-left-color: #00f593; background: #1a2421; }
-.tm-preview-msg .tm-preview-badge { display: inline-block; background: #9147ff; color: #fff; font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
-.tm-preview-msg.tm-live-preview .tm-preview-badge { background: #00c974; }
-.tm-preview-msg .tm-preview-user { font-weight: 700; color: #bf94ff; margin-right: 2px; }
-.tm-preview-msg.tm-live-preview .tm-preview-user { color: #00f593; }
-.tm-preview-msg img.tm-emote { height: 28px; width: auto; vertical-align: middle; margin: 0 1px; }
-.tm-preview-msg .tm-preview-close { position: absolute; top: 3px; right: 6px; background: transparent; border: none; color: #adadb8; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 4px; }
-.tm-preview-msg .tm-preview-close:hover { color: #fff; }
 @keyframes tmPreviewIn {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.tm-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 999999; display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: all 0.2s; }
+.tm-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 2147483647; display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: all 0.2s; }
 .tm-modal-overlay.open { opacity: 1; visibility: visible; }
 .tm-modal { background: #18181b; border: 1px solid #2f2f35; border-radius: 8px; width: 320px; padding: 20px; color: #efeff1; font-family: Inter, Roobert, "Helvetica Neue", Helvetica, Arial, sans-serif; box-shadow: 0 8px 32px rgba(0,0,0,0.5); transform: scale(0.9); transition: transform 0.2s; }
 .tm-modal-overlay.open .tm-modal { transform: scale(1); }
@@ -900,15 +890,13 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
     }
     function findChatInput() {
         if (getPlatform() === 'kick') {
-            return document.getElementById('chat-input') ||
-                document.querySelector('[data-testid="chat-input"]') ||
-                document.querySelector('.editor-input[contenteditable="true"], [data-chat-input][contenteditable="true"], [contenteditable="true"][placeholder]');
+            return findVisibleKickElement('#chat-input-wrapper [data-lexical-editor="true"], .editor-input[data-lexical-editor="true"], #chat-input, [data-testid="chat-input"], #chat-input-wrapper [contenteditable="true"], [contenteditable="true"][placeholder]');
         }
         return document.querySelector('div[data-a-target="chat-input"]');
     }
     function findSendButton() {
         return getPlatform() === 'kick'
-            ? document.getElementById('send-message-button')
+            ? findVisibleKickElement('#send-message-button')
             : document.querySelector('button[data-a-target="chat-send-button"]');
     }
     let kickChannelSettings = { slug: '', username: '', avatar: '', followersMode: false, subscribersMode: false, slowMode: false, messageInterval: 0 };
@@ -1024,31 +1012,70 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         return 0;
     }
     function cleanChatText(text) {
-        return String(text || '').replace(/[\u200B\u200C\u2060\uFEFF]/g, '').replace(/\u200D{2,}$/g, '').trim();
+        const value = String(text || '');
+        return getSettings().cleanHiddenChars
+            ? value.replace(/[\u200B\u200C\u2060\uFEFF]/g, '').replace(/\u200D{2,}$/g, '').trim()
+            : value.trim();
     }
-    function clearKickChatInput(input) {
-        input.focus();
-        document.execCommand('selectAll', false, null);
-        document.execCommand('delete', false, null);
+    function isKickElementVisible(element) {
+        if (!element || !element.isConnected || !element.getClientRects().length) return false;
+        const rect = element.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        let current = element;
+        while (current && current !== document.documentElement) {
+            const style = window.getComputedStyle(current);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0') return false;
+            current = current.parentElement;
+        }
+        return true;
+    }
+    function findVisibleKickElement(selector) {
+        return Array.from(document.querySelectorAll(selector)).find(isKickElementVisible) || null;
+    }
+    function getKickInputText(input) {
+        return String(input?.innerText || input?.textContent || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+    function kickInputHasContent(input) {
+        return !!getKickInputText(input) || !!input?.querySelector('img, [data-emote-name], [data-lexical-decorator="true"]');
+    }
+    function selectKickInput(input) {
+        input.focus({ preventScroll: true });
         const selection = window.getSelection();
-        selection?.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(input);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+    async function clearKickChatInput(input) {
+        selectKickInput(input);
+        try { document.execCommand('delete', false, null); } catch {}
+        await new Promise(resolve => setTimeout(resolve, 80));
+        if (kickInputHasContent(input)) {
+            selectKickInput(input);
+            try { document.execCommand('selectAll', false, null); } catch {}
+            try { document.execCommand('delete', false, null); } catch {}
+            input.dispatchEvent(new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true, composed: true }));
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return !kickInputHasContent(input);
     }
     async function sendKickChatMessage(input, text) {
-        clearKickChatInput(input);
-        const beforeInput = new InputEvent('beforeinput', {
-            inputType: 'insertText',
-            data: text,
-            bubbles: true,
-            cancelable: true,
-            composed: true
-        });
-        input.dispatchEvent(beforeInput);
-        await new Promise(resolve => setTimeout(resolve, 100));
-        if (!(input.textContent || '').trim()) document.execCommand('insertText', false, text);
-        await new Promise(resolve => setTimeout(resolve, 50));
-        if (!(input.textContent || '').trim()) return { ok: false, restriction: { type: 'input', message: 'Не удалось вставить текст в поле Kick' } };
+        const cleared = await clearKickChatInput(input);
+        if (!cleared) return { ok: false, restriction: { type: 'input', message: 'Не удалось очистить поле Kick. Сообщение не отправлено.' } };
+        input.focus({ preventScroll: true });
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(input);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        try { document.execCommand('insertText', false, text); } catch {}
+        await new Promise(resolve => setTimeout(resolve, 150));
+        const actualText = getKickInputText(input);
+        const expectedText = String(text).replace(/\s+/g, ' ').trim();
+        if (!actualText || actualText !== expectedText) return { ok: false, restriction: { type: 'input', message: 'Kick не подтвердил вставку текста. Сообщение не отправлено.' } };
         const button = findSendButton();
-        if (button && !button.disabled) {
+        if (button && !button.disabled && isKickElementVisible(button)) {
             button.click();
             return { ok: true };
         }
@@ -1097,109 +1124,18 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         const max = actualBase + variation;
         return (min + Math.random() * (max - min)) * 1000;
     }
-    function playBeep() {
-        try {
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)(); const oscillator = audioCtx.createOscillator(); const gainNode = audioCtx.createGain();
-            oscillator.type = 'square';
-            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
-            oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
-            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
-            oscillator.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
-            oscillator.start();
-            oscillator.stop(audioCtx.currentTime + 0.3);
-        } catch {}
-    }
+    function playBeep() {}
     let livePreviewEl = null; let historyPreviewEl = null; let currentTab = 'send'; let isRunning = false;
     let isPausedByUser = false; let isAutoSending = false; let currentFilter = 'all'; let lastKnownChannel = '';
     let activeHistoryIdx = -1; let currentEmoteTarget = null;
-    function getChatList() {
-        if (getPlatform() === 'kick') {
-            const input = findChatInput();
-            return document.getElementById('chatroom-messages') ||
-                document.querySelector('[data-testid="chatroom-messages"], [data-testid="chatroom"], [data-testid="chat-room"], [data-chatroom]') ||
-                input?.closest('aside') ||
-                input?.parentElement?.parentElement?.parentElement ||
-                null;
-        }
-        return document.querySelector('.seventv-chat-list') ||
-               document.querySelector('[data-test-selector="chat-scrollable-area__message-container"]') ||
-               document.querySelector('.chat-scrollable-area__message-container') ||
-               document.querySelector('.chat-list');
-    }
-    function getPreviewContainer() {
-        let container = document.getElementById('tm-preview-container');
-        if (container) return container;
-        const chatList = getChatList();
-        if (chatList) {
-            container = document.createElement('div');
-            container.id = 'tm-preview-container';
-            chatList.appendChild(container);
-            return container;
-        }
-        return null;
-    }
     function removeLivePreview() {
-        if (livePreviewEl) { livePreviewEl.remove(); livePreviewEl = null; }
-        const container = document.getElementById('tm-preview-container');
-        if (container) container.querySelectorAll('.tm-live-preview').forEach(el => el.remove());
+        document.getElementById('tm-preview-container')?.remove();
     }
     function removeHistoryPreview() {
-        if (historyPreviewEl) { historyPreviewEl.remove(); historyPreviewEl = null; }
-        const container = document.getElementById('tm-preview-container');
-        if (container) container.querySelectorAll('.tm-preview-msg:not(.tm-live-preview)').forEach(el => el.remove());
-        document.querySelectorAll('.tm-ac-hist-btn.preview.active').forEach(b => b.classList.remove('active'));
+        document.getElementById('tm-preview-container')?.remove();
     }
-    function updateLivePreview(text, username) {
-        const s = getSettings();
-        if (!s.livePreview || currentTab !== 'send' || isRunning || !text.trim()) {
-            removeLivePreview();
-            return;
-        }
-        const container = getPreviewContainer();
-        if (!container) return;
-        const name = username || getCurrentUsername() || 'You';
-        const html = `
-            <span class="tm-preview-badge">LIVE</span>
-            <span class="tm-preview-user">${escapeHtml(name)}</span>:
-            <span class="tm-preview-body">${renderEmotes(text)}</span>
-        `;
-        if (livePreviewEl && livePreviewEl.isConnected) {
-            livePreviewEl.innerHTML = html;
-        } else {
-            removeLivePreview();
-            const el = document.createElement('div');
-            el.className = 'tm-preview-msg tm-live-preview';
-            el.innerHTML = html;
-            container.appendChild(el);
-            livePreviewEl = el;
-            el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-    }
-    function showHistoryPreview(text, username) {
-        if (historyPreviewEl && historyPreviewEl.isConnected) {
-            removeHistoryPreview();
-            return false;
-        }
-        removeHistoryPreview();
-        const container = getPreviewContainer();
-        if (!container) return false;
-        const name = username || getCurrentUsername() || 'You'; const el = document.createElement('div');
-        el.className = 'tm-preview-msg';
-        el.innerHTML = `
-            <span class="tm-preview-badge">PREVIEW</span>
-            <span class="tm-preview-user">${escapeHtml(name)}</span>:
-            <span class="tm-preview-body">${renderEmotes(text)}</span>
-            <button class="tm-preview-close" title="Закрыть">×</button>
-        `;
-        el.querySelector('.tm-preview-close').addEventListener('click', removeHistoryPreview);
-        container.appendChild(el);
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        historyPreviewEl = el;
-        setTimeout(() => { if (historyPreviewEl === el) removeHistoryPreview(); }, 20000);
-        return true;
-    }
+    function updateLivePreview() {}
+    function showHistoryPreview() { return false; }
     function showConfirmModal(title, message, onConfirm) {
         let overlay = document.getElementById('tm-modal-overlay');
         if (!overlay) {
@@ -1255,7 +1191,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                     </div>
                     <button class="tm-ac-header-btn start" id="tm-ac-start" title="Запустить автоотправку" aria-label="Запустить автоотправку">▶</button>
                     <button class="tm-ac-header-btn stop" id="tm-ac-stop" style="display:none" title="Остановить автоотправку" aria-label="Остановить автоотправку">■</button>
-                    <button id="tm-autochat-toggle" title="Закрыть">×</button>
+                    
                 </div>
             </div>
 
@@ -1312,11 +1248,8 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 <div class="tm-ac-tab-content" id="tm-tab-settings">
                     <div class="tm-ac-section-title">Чат</div>
                     <label class="tm-ac-check">
-                        <input type="checkbox" id="tm-ac-live-preview" ${settings.livePreview ? 'checked' : ''}>
-                        <span class="tm-ac-check-copy"><span>Live-превью</span><small>Показывает, как сообщение будет выглядеть в чате, пока вы его набираете.</small></span>
-                    </label>
-                    <label class="tm-ac-check">
-                        <div class="tm-ac-desc">Скрытые символы не добавляются к сообщениям и очищаются перед отправкой.</div>
+                        <input type="checkbox" id="tm-ac-clean-hidden" ${settings.cleanHiddenChars ? 'checked' : ''}>
+                        <span class="tm-ac-check-copy"><span>Удалять скрытые символы</span><small>Убирает невидимые символы из пасты перед отправкой.</small></span>
                     </label>
 
                     <div id="tm-ac-7tv-settings-block">
@@ -1441,7 +1374,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             const platform = getPlatform();
             const chatInput = findChatInput();
             let chatRoom = platform === 'kick'
-                ? document.querySelector('#chatroom, [data-testid="chatroom"], [data-testid="chat-room"], [data-chatroom]')
+                ? findVisibleKickElement('#channel-chatroom, #chatroom, [data-testid*="chatroom" i], [data-testid*="chat-room" i], #chat-container, [id*="chatroom" i]')
                 : document.querySelector('section[data-test-selector="chat-room-component-layout"]') || document.querySelector('.chat-room');
             if (platform === 'kick' && !chatRoom && chatInput) {
                 let ancestor = chatInput.parentElement;
@@ -1514,7 +1447,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             toggleSidebarBtn.innerHTML = '▶';
             if (refreshFollowersOnlyStatus) setTimeout(refreshFollowersOnlyStatus, 0);
         });
-        panel.querySelector('#tm-autochat-toggle').addEventListener('click', (e) => { e.stopPropagation(); closePanel(); });
+
 
         const tabs = panel.querySelectorAll('.tm-ac-tab'); const contents = panel.querySelectorAll('.tm-ac-tab-content');
         tabs.forEach(tab => {
@@ -1535,7 +1468,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             });
         });
         const msgEl = panel.querySelector('#tm-ac-msg'); const intervalEl = panel.querySelector('#tm-ac-interval'); const startBtn = panel.querySelector('#tm-ac-start'); const stopBtn = panel.querySelector('#tm-ac-stop');
-        const statusEl = panel.querySelector('#tm-ac-status'); const historyList = panel.querySelector('#tm-ac-history-list'); const charCount = panel.querySelector('#tm-ac-char-count'); const livePreviewCheck = panel.querySelector('#tm-ac-live-preview');
+        const statusEl = panel.querySelector('#tm-ac-status'); const historyList = panel.querySelector('#tm-ac-history-list'); const charCount = panel.querySelector('#tm-ac-char-count'); const cleanHiddenCharsCheck = panel.querySelector('#tm-ac-clean-hidden');
         const runStatusCard = panel.querySelector('#tm-ac-run-status'); const runStateEl = panel.querySelector('#tm-ac-run-state'); const runDetailEl = panel.querySelector('#tm-ac-run-detail'); const runValueEl = panel.querySelector('#tm-ac-run-value');
         const spoilerEnabledCheck = panel.querySelector('#tm-ac-spoiler-enabled'); const spoilerNeverCheck = panel.querySelector('#tm-ac-spoiler-never'); const spoilerNeverRow = panel.querySelector('#tm-ac-spoiler-never-row');
         const slowmodePill = panel.querySelector('#tm-ac-slowmode-pill'); const slowmodeText = panel.querySelector('#tm-ac-slowmode-text'); const followersOnlyStatusEl = panel.querySelector('#tm-ac-followers-status'); const followersOnlyTitleEl = panel.querySelector('#tm-ac-followers-title'); const followersOnlyDetailEl = panel.querySelector('#tm-ac-followers-detail'); const sevenTVRefreshBtn = panel.querySelector('#tm-ac-7tv-refresh'); const sevenTVRefreshStatus = panel.querySelector('#tm-ac-7tv-status'); const sevenTVSettingsBlock = panel.querySelector('#tm-ac-7tv-settings-block'); const kickEmotesInfo = panel.querySelector('#tm-ac-kick-emotes-info'); const kickEmotesStatus = panel.querySelector('#tm-ac-kick-emotes-status'); const filterWrapper = panel.querySelector('#tm-ac-history-filter-wrapper'); const filterHeader = panel.querySelector('#tm-ac-history-filter-header');
@@ -1635,7 +1568,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         }
         function saveSettings() {
             const d = loadData();
-            d.livePreview = livePreviewCheck.checked;
+            d.cleanHiddenChars = cleanHiddenCharsCheck.checked;
             delete d.antiSpamRandomizer;
             d.spoilerEnabled = spoilerEnabledCheck.checked;
             d.spoilerNeverReveal = spoilerNeverCheck.checked;
@@ -1644,7 +1577,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             updateSpoilerLock();
             updateLivePreview(msgEl.value, username);
         }
-        livePreviewCheck.addEventListener('change', saveSettings);
+        cleanHiddenCharsCheck.addEventListener('change', saveSettings);
         spoilerEnabledCheck.addEventListener('change', saveSettings);
         spoilerNeverCheck.addEventListener('change', saveSettings);
         updateSpoilerLock();
@@ -1967,7 +1900,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                                     <button class="tm-ac-hist-btn send" data-tooltip="Удерживайте 1 секунду, чтобы отправить" aria-label="Отправить пасту">📤</button>
                                 </div>
                                 <div class="tm-ac-hist-action-tools">
-                                    <button class="tm-ac-hist-btn preview" data-tooltip="Показать предпросмотр" aria-label="Предпросмотр">👁</button>
+                                    
                                     <button class="tm-ac-hist-btn edit" data-tooltip="Редактировать текст и варианты" aria-label="Редактировать">✏️</button>
                                     <button class="tm-ac-hist-btn pin ${isPinned ? "active" : ""}" data-tooltip="${isPinned ? "Открепить от этого фильтра" : "Закрепить в этом фильтре"}" aria-label="${isPinned ? "Открепить" : "Закрепить"}">${isPinned ? "📌" : "📍"}</button>
                                     <button class="tm-ac-hist-btn delete" data-tooltip="Удерживайте 1 секунду, чтобы удалить" aria-label="Удалить пасту">🗑</button>
@@ -2018,7 +1951,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 });
             });
             historyList.querySelectorAll('.tm-ac-hist-item').forEach(item => {
-                const idx = +item.dataset.idx; const entry = getHistory()[idx]; const previewBtn = item.querySelector('.preview'); const channelEl = item.querySelector('.tm-ac-hist-channel');
+                const idx = +item.dataset.idx; const entry = getHistory()[idx]; const channelEl = item.querySelector('.tm-ac-hist-channel');
                 if (channelEl) {
                     channelEl.addEventListener('click', (e) => {
                         e.stopPropagation();
@@ -2177,12 +2110,6 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 deleteBtn.addEventListener('pointercancel', resetDelHold);
                 deleteBtn.addEventListener('pointerleave', resetDelHold);
                 deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); if (delSuppressClick) e.preventDefault(); });
-                previewBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const randVariant = entry?.variants[Math.floor(Math.random() * entry.variants.length)] || ''; const opened = showHistoryPreview(randVariant, username);
-                    document.querySelectorAll('.tm-ac-hist-btn.preview').forEach(b => b.classList.remove('active'));
-                    if (opened) previewBtn.classList.add('active');
-                });
                 item.addEventListener('click', () => {
                     activeHistoryIdx = idx;
                     msgEl.value = (entry?.variants[0] || '').slice(0, MAX_CHARS);
