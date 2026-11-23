@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch Panels Telegram Spoiler + AutoChat
 // @namespace    twitch-panels-telegram-spoiler
-// @version      12.1
+// @version      12.2
 // @description  Telegram-style particle blur + AutoChat with advanced features
 // @match        https://www.twitch.tv/*
 // @run-at       document-idle
@@ -568,16 +568,133 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
         clone.querySelectorAll('button, [role="button"], a, input, textarea, [contenteditable="true"], svg, img, [aria-hidden="true"], [class*="button"], [data-a-target*="follow"]').forEach(node => node.remove());
         return (clone.innerText || clone.textContent || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
     }
-    function requestFollowersBannerExpand(channelName, chatInput) {
-        if (followersFocusAttempts.has(channelName) || !chatInput || !chatInput.isConnected) return;
-        const active = document.activeElement;
-        if (active && active !== document.body && active !== document.documentElement && !chatInput.contains(active)) return;
-        const target = chatInput.matches('[contenteditable="true"], textarea, input, [role="textbox"], .chat-input__textarea') ? chatInput : chatInput.querySelector('[contenteditable="true"], textarea, input, [role="textbox"], .chat-input__textarea') || chatInput;
-        if (!target || typeof target.focus !== 'function' || !target.getClientRects().length) return;
+    function parseFollowersDurationSeconds(durationText) {
+        const units = /(\d+)\s*(weeks?|wks?|недел(?:я|и|ю|ь|ей)?|months?|mos?|месяц(?:а|ев)?|days?|день|дня|дней|hours?|hrs?|час(?:а|ов)?|minutes?|mins?|минут(?:а|ы)?|seconds?|secs?|секунд(?:а|ы)?)/gi;
+        let total = 0;
+        for (const match of String(durationText || '').matchAll(units)) {
+            const value = parseInt(match[1], 10);
+            const unit = match[2].toLowerCase();
+            if (/week|wk|недел/.test(unit)) total += value * 604800;
+            else if (/month|mo|месяц/.test(unit)) total += value * 2592000;
+            else if (/day|день|дня|дней/.test(unit)) total += value * 86400;
+            else if (/hour|hr|час/.test(unit)) total += value * 3600;
+            else if (/minute|min|минут/.test(unit)) total += value * 60;
+            else if (/second|sec|секунд/.test(unit)) total += value;
+        }
+        return total > 0 ? total : null;
+    }
+    function formatFollowersSeconds(totalSeconds) {
+        let left = Math.max(0, Math.ceil(totalSeconds));
+        const labels = {
+            month: ['месяц', 'месяца', 'месяцев'],
+            week: ['неделя', 'недели', 'недель'],
+            day: ['день', 'дня', 'дней'],
+            hour: ['час', 'часа', 'часов'],
+            minute: ['минута', 'минуты', 'минут'],
+            second: ['секунда', 'секунды', 'секунд']
+        };
+        const plural = (value, forms) => {
+            const n = value % 100;
+            const last = value % 10;
+            return n >= 11 && n <= 14 ? forms[2] : last === 1 ? forms[0] : last >= 2 && last <= 4 ? forms[1] : forms[2];
+        };
+        const units = [
+            ['month', 2592000],
+            ['week', 604800],
+            ['day', 86400],
+            ['hour', 3600],
+            ['minute', 60],
+            ['second', 1]
+        ];
+        const parts = [];
+        for (const [key, size] of units) {
+            const value = Math.floor(left / size);
+            if (value > 0) {
+                parts.push(value + ' ' + plural(value, labels[key]));
+                left -= value * size;
+            }
+        }
+        return parts.join(' ') || '0 секунд';
+    }
+    function findCollapsedFollowersBanner(chatInput) {
+        const phrase = /(?:чат\s+только\s+для\s+(?:фолловеров|подписчиков)|followers?[-\s]+only(?:\s+chat)?|chat\s+is\s+followers?[-\s]+only)/i;
+        const candidates = new Set();
+        const collect = root => {
+            if (!root || root.nodeType !== 1) return;
+            candidates.add(root);
+            root.querySelectorAll('p, span, div, [data-a-target], [data-test-selector], [role="alert"]').forEach(node => candidates.add(node));
+        };
+        const scope = chatInput?.closest('.chat-input') || chatInput?.parentElement?.parentElement || chatInput?.parentElement;
+        if (scope) collect(scope);
+        let current = chatInput;
+        let depth = 0;
+        while (current && current.parentElement && depth++ < 8) {
+            const parent = current.parentElement;
+            let sibling = current.previousElementSibling;
+            let count = 0;
+            while (sibling && count++ < 4) {
+                collect(sibling);
+                sibling = sibling.previousElementSibling;
+            }
+            sibling = current.nextElementSibling;
+            count = 0;
+            while (sibling && count++ < 2) {
+                collect(sibling);
+                sibling = sibling.nextElementSibling;
+            }
+            current = parent;
+        }
+        const matches = [];
+        for (const element of candidates) {
+            if (!element.isConnected) continue;
+            const style = window.getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || !element.getClientRects().length) continue;
+            const text = (element.innerText || element.textContent || element.getAttribute('aria-label') || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+            if (text && text.length <= 220 && phrase.test(text)) matches.push({ element, text });
+        }
+        matches.sort((a, b) => a.text.length - b.text.length);
+        return matches[0] || null;
+    }
+    function requestFollowersBannerExpand(channelName, chatInput, banner) {
+        if (!channelName || followersFocusAttempts.has(channelName)) return;
+        let target = null;
+        if (chatInput && chatInput.isConnected) {
+            target = chatInput.matches('[contenteditable="true"], textarea, input, [role="textbox"]') ? chatInput : chatInput.querySelector('[contenteditable="true"], textarea, input, [role="textbox"], .chat-input__textarea') || chatInput;
+        }
+        if (!target || !target.isConnected || !target.getClientRects().length) target = banner?.element || null;
+        if (!target || !target.isConnected || !target.getClientRects().length) return;
         followersFocusAttempts.add(channelName);
-        try { target.focus({ preventScroll: true }); } catch { try { target.focus(); } catch {} }
-        if (document.activeElement !== target && typeof target.click === 'function') target.click();
-        [120, 350, 800, 1400].forEach(delay => setTimeout(() => { if (refreshFollowersOnlyStatus) refreshFollowersOnlyStatus(); }, delay));
+        const previousFocus = document.activeElement;
+        const rect = target.getBoundingClientRect();
+        const eventData = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            view: window,
+            button: 0,
+            buttons: 1,
+            clientX: rect.left + rect.width / 2,
+            clientY: rect.top + rect.height / 2,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true
+        };
+        try {
+            if (typeof PointerEvent === 'function') target.dispatchEvent(new PointerEvent('pointerdown', eventData));
+            else target.dispatchEvent(new MouseEvent('pointerdown', eventData));
+            target.dispatchEvent(new MouseEvent('mousedown', eventData));
+            if (typeof PointerEvent === 'function') target.dispatchEvent(new PointerEvent('pointerup', { ...eventData, buttons: 0 }));
+            else target.dispatchEvent(new MouseEvent('pointerup', { ...eventData, buttons: 0 }));
+            target.dispatchEvent(new MouseEvent('mouseup', { ...eventData, buttons: 0 }));
+            if (typeof target.click === 'function') target.click();
+        } catch {}
+        setTimeout(() => {
+            if (refreshFollowersOnlyStatus) refreshFollowersOnlyStatus();
+            if (previousFocus && previousFocus !== document.body && previousFocus !== document.documentElement && previousFocus !== target && previousFocus.isConnected && (document.activeElement === target || target.contains(document.activeElement))) {
+                try { previousFocus.focus({ preventScroll: true }); } catch { try { previousFocus.focus(); } catch {} }
+            }
+        }, 260);
+        setTimeout(() => { if (refreshFollowersOnlyStatus) refreshFollowersOnlyStatus(); }, 650);
     }
     function getFollowersOnlyInfo() {
         const patterns = [
@@ -593,50 +710,59 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             /follow this channel.{0,140}(?:chat|send messages|chatting|\d)/i
         ];
         const unit = '(?:weeks?|wks?|недел(?:я|и|ю|ь|ей)?|months?|mos?|месяц(?:а|ев)?|days?|день|дня|дней|hours?|hrs?|час(?:а|ов)?|minutes?|mins?|минут(?:а|ы)?|seconds?|secs?|секунд(?:а|ы)?)';
-        const sequence = `\\d+\\s*${unit}(?:\\s*(?:(?:,|and|и)\\s*)?\\d+\\s*${unit}){0,4}`;
+        const sequence = '\\d+\\s*' + unit + '(?:\\s*(?:(?:,|and|и)\\s*)?\\d+\\s*' + unit + '){0,4}';
         const remainingPatterns = [
-            new RegExp(`(?:ждать|ожидать)\\s+осталось\\s*[:—-]?\\s*(${sequence})`, 'i'),
-            new RegExp(`осталось\\s*(?:ждать|ожидать)?\\s*[:—-]?\\s*(${sequence})`, 'i'),
-            new RegExp(`(?:remaining|time\\s+left|time\\s+remaining|left)\\s*[:—-]?\\s*(${sequence})`, 'i'),
-            new RegExp(`(${sequence})\\s*(?:осталось|осталось ждать|remaining|left)\\b`, 'i'),
-            new RegExp(`(?:wait|waiting)\\s+(?:for|another)?\\s*[:—-]?\\s*(${sequence})`, 'i'),
-            new RegExp(`(?:можно будет писать|сможете общаться|can chat|can send messages)\\s+(?:через|in)\\s*(${sequence})`, 'i')
+            new RegExp('(?:ждать|ожидать)\\s+осталось\\s*[:—-]?\\s*(' + sequence + ')', 'i'),
+            new RegExp('осталось\\s*(?:ждать|ожидать)?\\s*[:—-]?\\s*(' + sequence + ')', 'i'),
+            new RegExp('(?:remaining|time\\s+left|time\\s+remaining|left)\\s*[:—-]?\\s*(' + sequence + ')', 'i'),
+            new RegExp('(' + sequence + ')\\s*(?:осталось|осталось ждать|remaining|left)\\b', 'i'),
+            new RegExp('(?:wait|waiting)\\s+(?:for|another)?\\s*[:—-]?\\s*(' + sequence + ')', 'i'),
+            new RegExp('(?:можно будет писать|сможете общаться|can chat|can send messages)\\s+(?:через|in)\\s*(' + sequence + ')', 'i')
         ];
         const requiredPatterns = [
-            new RegExp(`(?:нужно быть фолловером|нужно быть подписчиком|необходимо быть фолловером|необходимо быть подписчиком|требуется быть фолловером|требуется быть подписчиком)\\s*(${sequence})`, 'i'),
-            new RegExp(`(?:follow|following)\\s+(?:this\\s+channel\\s+)?for\\s+(${sequence})`, 'i'),
-            new RegExp(`(?:for at least|minimum follow(?:ing)? time\\s*[:—-]?)\\s*(${sequence})`, 'i')
+            new RegExp('(?:нужно быть фолловером|нужно быть подписчиком|необходимо быть фолловером|необходимо быть подписчиком|требуется быть фолловером|требуется быть подписчиком)\\s*(' + sequence + ')', 'i'),
+            new RegExp('(?:follow|following)\\s+(?:this\\s+channel\\s+)?for\\s+(' + sequence + ')', 'i'),
+            new RegExp('(?:for at least|minimum follow(?:ing)? time\\s*[:—-]?)\\s*(' + sequence + ')', 'i')
         ];
         const selectors = '[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [data-a-target*="followers-only"], [class*="chat-rules"], [class*="followers-only"], [role="alert"]';
-        const candidates = new Set(document.querySelectorAll(selectors));
-        const chatInput = document.querySelector('div[data-a-target="chat-input"]') || document.querySelector('.chat-input__textarea');
+        const chatInput = document.querySelector('[data-a-target="chat-input"]') || document.querySelector('.chat-input__textarea') || document.querySelector('.chat-input [contenteditable="true"]');
         const channelName = (getChannelInfo().name || window.location.pathname.split('/').filter(Boolean)[0] || '').toLowerCase();
+        const collapsedBanner = findCollapsedFollowersBanner(chatInput);
+        const candidates = new Set(document.querySelectorAll(selectors));
         if (chatInput) {
             const area = chatInput.closest('.chat-input') || chatInput.parentElement?.parentElement || chatInput.parentElement;
             if (area) {
-                area.querySelectorAll(selectors).forEach(node => candidates.add(node));
+                area.querySelectorAll(selectors + ', p, span, div, [data-a-target], [data-test-selector]').forEach(node => candidates.add(node));
                 let current = chatInput;
-                while (current && current !== area) {
-                    if (current.previousElementSibling) {
-                        candidates.add(current.previousElementSibling);
-                        current.previousElementSibling.querySelectorAll(selectors + ', p, span, [data-a-target]').forEach(node => candidates.add(node));
+                let depth = 0;
+                while (current && current.parentElement && depth++ < 8) {
+                    const previous = current.previousElementSibling;
+                    if (previous) {
+                        candidates.add(previous);
+                        previous.querySelectorAll(selectors + ', p, span, div, [data-a-target], [data-test-selector]').forEach(node => candidates.add(node));
                     }
                     current = current.parentElement;
                 }
             }
         }
+        if (collapsedBanner) candidates.add(collapsedBanner.element);
         const isFollowButton = element => {
             const label = [element.innerText, element.textContent, element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('data-a-target')].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
             return /^(?:follow(?:\s+(?:this\s+)?channel)?|отслеживать|подписаться)(?:\s|$)/i.test(label);
         };
-        let best = null; let bestScore = -1;
+        let best = null;
+        let bestScore = -1;
         for (const element of candidates) {
             if (!element || !element.isConnected || element.matches('textarea, input, [contenteditable="true"], .chat-input__textarea, button')) continue;
             const style = window.getComputedStyle(element);
             if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0' || !element.getClientRects().length) continue;
             const bannerScope = element.closest('[data-a-target="chat-rules-banner"], [data-test-selector*="chat-rules"], [data-a-target*="followers-only"], [class*="chat-rules"], [class*="followers-only"], [role="alert"]') || element;
             const text = extractFollowersMessage(bannerScope);
-            if (!text || text.length > 900 || !patterns.some(pattern => pattern.test(text))) continue;
+            if (!text || text.length > 900) continue;
+            const remainingMatch = remainingPatterns.map(pattern => text.match(pattern)).find(Boolean);
+            const requiredMatch = requiredPatterns.map(pattern => text.match(pattern)).find(Boolean);
+            const followerContext = patterns.some(pattern => pattern.test(text));
+            if (!followerContext && !remainingMatch && !requiredMatch) continue;
             const controls = [];
             if (bannerScope.matches('button, [role="button"], a, [data-a-target*="follow"]')) controls.push(bannerScope);
             bannerScope.querySelectorAll('button, [role="button"], a, [data-a-target*="follow"]').forEach(control => controls.push(control));
@@ -644,36 +770,58 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
                 const controlStyle = window.getComputedStyle(control);
                 return controlStyle.display !== 'none' && controlStyle.visibility !== 'hidden' && control.getClientRects().length > 0 && isFollowButton(control);
             });
-            let remaining = '';
-            for (const pattern of remainingPatterns) {
-                const match = text.match(pattern);
-                if (match) { remaining = formatFollowersDuration(match[1]); if (remaining) break; }
-            }
-            let required = '';
-            for (const pattern of requiredPatterns) {
-                const match = text.match(pattern);
-                if (match) { required = formatFollowersDuration(match[1]); if (required) break; }
-            }
+            const remainingRaw = remainingMatch ? remainingMatch[1] : '';
+            const remaining = remainingRaw ? formatFollowersDuration(remainingRaw) : '';
+            let required = requiredMatch ? formatFollowersDuration(requiredMatch[1]) : '';
             if (!required && !remaining) {
-                const requiredMatch = text.match(/(?:фолловером|подписчиком)\s+(\d+\s*(?:days?|день|дня|дней|weeks?|недел(?:я|и|ю|ь|ей)?))/i);
-                if (requiredMatch) required = formatFollowersDuration(requiredMatch[1]);
+                const requiredMatchFallback = text.match(/(?:фолловером|подписчиком)\s+(\d+\s*(?:days?|день|дня|дней|weeks?|недел(?:я|и|ю|ь|ей)?))/i);
+                if (requiredMatchFallback) required = formatFollowersDuration(requiredMatchFallback[1]);
             }
             const info = { text, remaining, required, notFollowing: followButton, channel: channelName };
-            if (remaining || required) {
-                followersOnlyCache.set(channelName, info);
+            if (remainingRaw || required) {
+                const previous = followersOnlyCache.get(channelName);
+                const parsedSeconds = remainingRaw ? parseFollowersDurationSeconds(remainingRaw) : null;
+                const sameReading = previous && previous.remainingRaw === remainingRaw && previous.remainingCapturedAt;
+                followersOnlyCache.set(channelName, {
+                    ...info,
+                    remainingRaw,
+                    remainingSeconds: parsedSeconds,
+                    remainingCapturedAt: parsedSeconds === null ? 0 : (sameReading ? previous.remainingCapturedAt : Date.now())
+                });
             }
             const score = (remaining ? 10000 : 0) + (required ? 5000 : 0) + (followButton ? 1000 : 0) + Math.min(text.length, 500);
-            if (score > bestScore) { best = info; bestScore = score; }
+            if (score > bestScore) {
+                best = info;
+                bestScore = score;
+            }
         }
-        if (!best) {
-            if (channelName) followersOnlyCache.delete(channelName);
+        const hasBanner = !!collapsedBanner || !!best;
+        if (!hasBanner) {
+            if (channelName) {
+                followersOnlyCache.delete(channelName);
+                followersFocusAttempts.delete(channelName);
+            }
             return null;
         }
-        if (best.notFollowing) return best;
-        if (!best.remaining && !best.required) {
-            const cached = followersOnlyCache.get(channelName);
-            if (cached && (cached.remaining || cached.required)) return { ...cached, text: cached.text, notFollowing: false };
-            if (channelName) requestFollowersBannerExpand(channelName, chatInput);
+        const cached = followersOnlyCache.get(channelName);
+        if (cached && (cached.remaining || cached.required)) {
+            const result = { ...cached, notFollowing: !!best?.notFollowing };
+            if (cached.remainingSeconds !== null && cached.remainingCapturedAt) {
+                const elapsed = Math.max(0, (Date.now() - cached.remainingCapturedAt) / 1000);
+                result.remaining = formatFollowersSeconds(cached.remainingSeconds - elapsed);
+            }
+            return result;
+        }
+        if (best?.notFollowing) return best;
+        if (collapsedBanner) {
+            requestFollowersBannerExpand(channelName, chatInput, collapsedBanner);
+            return {
+                text: best?.text || collapsedBanner.text,
+                remaining: '',
+                required: best?.required || '',
+                notFollowing: false,
+                channel: channelName
+            };
         }
         return best;
     }
@@ -1078,6 +1226,7 @@ body.tm-spoiler-never-reveal .tm-spoiler-target .tm-spoiler-img { filter: blur(2
             panel.classList.add('open');
             toggleSidebarBtn.classList.add('open');
             toggleSidebarBtn.innerHTML = '▶';
+            if (refreshFollowersOnlyStatus) setTimeout(refreshFollowersOnlyStatus, 0);
         });
         panel.querySelector('#tm-autochat-toggle').addEventListener('click', (e) => { e.stopPropagation(); closePanel(); });
 
